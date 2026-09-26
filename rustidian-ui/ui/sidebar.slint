@@ -1,0 +1,379 @@
+import { VerticalBox, HorizontalBox, Button, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+import { NoteItem, BacklinkItem } from "types.slint";
+
+export component Sidebar inherits Rectangle {
+    background: #181825;
+    border-width: 0px;
+
+    in-out property <[NoteItem]> notes: [];
+    in-out property <[NoteItem]> search-results: [];
+    in-out property <[BacklinkItem]> backlinks: [];
+    in-out property <string> current-note-id: "";
+    in-out property <bool> graph-available: false;
+
+    callback note-selected(string);
+    callback new-note-requested();
+    callback delete-requested(string);
+    callback search-changed(string);
+    callback vault-change-requested();
+    callback rename-requested(string, string);   // (id, new-title)
+
+    // Which list to show: notes or search results
+    property <bool> searching: search-box.text != "";
+
+    // Which note row is showing the delete confirmation
+    property <string> pending-delete-id: "";
+
+    // Which note row is in inline-rename mode (right-click activates this)
+    property <string> renaming-id: "";
+
+    VerticalBox {
+        padding: 8px;
+        spacing: 6px;
+        vertical-stretch: 1;
+
+        // ── Header ────────────────────────────────────────────────────────────
+        HorizontalBox {
+            alignment: space-between;
+            height: 32px;
+
+            Text {
+                text: "Rustidian";
+                color: #cba6f7;
+                font-size: 15px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            if !root.searching: Text {
+                text: root.notes.length == 0 ? "" : root.notes.length + " notes";
+                color: #45475a;
+                font-size: 11px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+            }
+
+            if root.searching: Text {
+                text: root.search-results.length + " results";
+                color: #89b4fa;
+                font-size: 11px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+            }
+        }
+
+        Rectangle { height: 1px; background: #313244; }
+
+        // ── Search box ────────────────────────────────────────────────────────
+        search-box := LineEdit {
+            placeholder-text: "Search notes…";
+            edited(q) => { root.search-changed(q); }
+        }
+
+        // ── New note button ───────────────────────────────────────────────────
+        Button {
+            text: "+ New note    Ctrl+N";
+            clicked => { root.new-note-requested(); }
+        }
+
+        // ── Section label ─────────────────────────────────────────────────────
+        Text {
+            text: root.searching ? "SEARCH RESULTS" : "NOTES";
+            color: #45475a;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            height: 20px;
+            vertical-alignment: center;
+        }
+
+        // ── Empty states ──────────────────────────────────────────────────────
+        if !root.searching && root.notes.length == 0: Rectangle {
+            height: 60px;
+            background: transparent;
+            Text {
+                text: "No notes yet.\nPress + New note to start.";
+                color: #45475a;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.searching && root.search-results.length == 0: Rectangle {
+            height: 48px;
+            background: transparent;
+            Text {
+                text: "No notes match your search.";
+                color: #45475a;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+            }
+        }
+
+        // ── Note list ─────────────────────────────────────────────────────────
+        note-list := ListView {
+            vertical-stretch: 1;
+
+            for item in (root.searching ? root.search-results : root.notes): Rectangle {
+                // Row height varies by state
+                height: item.id == root.pending-delete-id ? 56px
+                      : item.id == root.renaming-id      ? 40px
+                      : item.folder != ""                 ? 46px
+                      : 34px;
+                background: item.id == root.pending-delete-id
+                    ? #3d1a25
+                    : (item.id == root.current-note-id ? #313244 : transparent);
+                border-radius: 4px;
+
+                // ── Delete-confirm row ────────────────────────────────────────
+                if item.id == root.pending-delete-id: VerticalBox {
+                    padding: 4px;
+                    spacing: 4px;
+                    width: parent.width;
+                    height: parent.height;
+
+                    Text {
+                        text: "Delete \"" + item.title + "\"?";
+                        color: #f38ba8;
+                        font-size: 12px;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+
+                    HorizontalBox {
+                        spacing: 4px;
+                        Button {
+                            text: "Delete";
+                            height: 22px;
+                            clicked => {
+                                root.delete-requested(item.id);
+                                root.pending-delete-id = "";
+                            }
+                        }
+                        Button {
+                            text: "Cancel";
+                            height: 22px;
+                            clicked => { root.pending-delete-id = ""; }
+                        }
+                    }
+                }
+
+                // ── Inline-rename row ─────────────────────────────────────────
+                if item.id == root.renaming-id && item.id != root.pending-delete-id: HorizontalBox {
+                    padding-left: 8px;
+                    padding-right: 4px;
+                    spacing: 4px;
+                    width: parent.width;
+                    height: parent.height;
+
+                    rename-edit := LineEdit {
+                        text: item.title;
+                        font-size: 13px;
+                        horizontal-stretch: 1;
+                        height: 28px;
+                        // Confirm on Enter
+                        accepted(new-name) => {
+                            if new-name != "" && new-name != item.title {
+                                root.rename-requested(item.id, new-name);
+                            }
+                            root.renaming-id = "";
+                        }
+                    }
+
+                    // Cancel rename with Escape — small ✕ button
+                    cancel-rename := TouchArea {
+                        width: 22px;
+                        height: 22px;
+                        mouse-cursor: pointer;
+                        clicked => { root.renaming-id = ""; }
+
+                        Rectangle {
+                            background: cancel-rename.has-hover ? #252535 : transparent;
+                            border-radius: 3px;
+                            width: parent.width;
+                            height: parent.height;
+                            Text {
+                                text: "✕";
+                                color: #6c7086;
+                                font-size: 11px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                width: parent.width;
+                                height: parent.height;
+                            }
+                        }
+                    }
+                }
+
+                // ── Normal row ────────────────────────────────────────────────
+                if item.id != root.pending-delete-id && item.id != root.renaming-id: Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: transparent;
+
+                    row-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        // Left-click: open note
+                        clicked => { root.note-selected(item.id); }
+                        // Right-click: start inline rename
+                        pointer-event(ev) => {
+                            if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
+                                root.renaming-id = item.id;
+                                // Cancel any pending delete to avoid conflicting states
+                                root.pending-delete-id = "";
+                            }
+                        }
+                    }
+
+                    if row-touch.has-hover && item.id != root.current-note-id: Rectangle {
+                        background: #252535;
+                        border-radius: 4px;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+
+                    HorizontalBox {
+                        padding-left: item.folder != "" ? 20px : 8px;
+                        padding-right: 4px;
+                        alignment: space-between;
+
+                        VerticalBox {
+                            padding: 0px;
+                            spacing: 1px;
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+
+                            Text {
+                                text: item.title;
+                                color: item.id == root.current-note-id ? #cdd6f4 : #bac2de;
+                                font-size: 13px;
+                                overflow: elide;
+                            }
+
+                            if item.folder != "": Text {
+                                text: "📁 " + item.folder;
+                                color: #45475a;
+                                font-size: 10px;
+                                overflow: elide;
+                                vertical-stretch: 0;
+                            }
+                        }
+
+                        // Right-click hint on hover
+                        if row-touch.has-hover: Text {
+                            text: "⋮";
+                            color: #45475a;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            horizontal-alignment: right;
+                            width: 18px;
+                        }
+
+                        // Delete button (always visible as ✕)
+                        del-touch := TouchArea {
+                            width: 26px;
+                            height: 26px;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.pending-delete-id = item.id;
+                                root.renaming-id = "";
+                            }
+
+                            Rectangle {
+                                background: del-touch.has-hover ? #3d1a25 : transparent;
+                                border-radius: 4px;
+                                width: parent.width;
+                                height: parent.height;
+
+                                Text {
+                                    text: "✕";
+                                    color: del-touch.has-hover ? #f38ba8 : #45475a;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Backlinks ─────────────────────────────────────────────────────────
+        if root.backlinks.length > 0: VerticalBox {
+            padding: 0px;
+            spacing: 4px;
+
+            Rectangle { height: 1px; background: #313244; }
+
+            Text {
+                text: "BACKLINKS";
+                color: #45475a;
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.8px;
+                height: 20px;
+                vertical-alignment: center;
+            }
+
+            for bl in root.backlinks: Rectangle {
+                height: 30px;
+                background: transparent;
+                border-radius: 4px;
+
+                bl-hover := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.note-selected(bl.id); }
+                }
+
+                if bl-hover.has-hover: Rectangle {
+                    background: #252535;
+                    border-radius: 4px;
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                HorizontalBox {
+                    padding-left: 8px;
+                    alignment: start;
+                    Text {
+                        text: "← " + bl.title;
+                        color: #89b4fa;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // Spacer + vault button
+        Rectangle { vertical-stretch: 1; }
+        Rectangle { height: 1px; background: #313244; }
+        Button {
+            text: "⚙  Change vault…";
+            clicked => { root.vault-change-requested(); }
+        }
+    }
+
+    // Right border
+    Rectangle {
+        x: parent.width - 1px;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        background: #313244;
+    }
+}

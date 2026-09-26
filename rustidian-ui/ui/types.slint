@@ -1,0 +1,27 @@
+// Shared data structures used by both main.slint and sidebar.slint.
+
+export struct NoteItem {
+    id: string,
+    title: string,
+    // Relative folder path within the vault (empty string for root-level notes)
+    folder: string,
+}
+
+export struct BacklinkItem {
+    id: string,
+    title: string,
+}
+
+// A tab in the tab bar (one per open note)
+export struct TabItem {
+    id: string,
+    title: string,
+    unsaved: bool,
+}
+
+// A folder entry for the sidebar tree
+export struct FolderItem {
+    name: string,       // display name of the folder segment
+    path: string,       // full relative path (used to filter notes)
+    collapsed: bool,
+}

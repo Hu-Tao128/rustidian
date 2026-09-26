@@ -1,0 +1,3 @@
+[workspace]
+members = ["rustidian-core", "rustidian-ui"]
+resolver = "2"

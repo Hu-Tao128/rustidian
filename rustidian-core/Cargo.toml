@@ -1,0 +1,23 @@
+[package]
+name = "rustidian-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pulldown-cmark = "0.13"
+thiserror = "2"
+dirs = "5"
+walkdir = "2"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dependencies.petgraph]
+version = "0.6"
+optional = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+graph = ["dep:petgraph"]

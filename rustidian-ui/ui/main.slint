@@ -1,0 +1,522 @@
+import { VerticalBox, HorizontalBox, Button, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+import { NoteItem, BacklinkItem, TabItem } from "types.slint";
+import { Sidebar } from "sidebar.slint";
+import { Editor } from "editor.slint";
+import { Preview } from "preview.slint";
+
+export { NoteItem, BacklinkItem, TabItem }
+
+export enum StatusKind { info, success, error }
+
+// View mode — mirrors Obsidian's editor/split/preview modes
+export enum ViewMode { edit, split, preview }
+
+export global AppState {
+    in-out property <bool> graph-available: false;
+    in-out property <bool> show-graph: false;
+    in-out property <bool> unsaved: false;
+    in-out property <string> status-message: "";
+    in-out property <string> search-query: "";
+}
+
+export component AppWindow inherits Window {
+    title: "Rustidian";
+    min-width: 640px;
+    min-height: 480px;
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    background: #1e1e2e;
+
+    // ── public properties ────────────────────────────────────────────────────
+    in-out property <[NoteItem]> notes: [];
+    in-out property <string> current-note-id: "";
+    in-out property <string> current-note-title: "";
+    in-out property <string> current-note-content: "";
+    in-out property <string> preview-html: "";
+    in-out property <[BacklinkItem]> backlinks: [];
+    in-out property <[NoteItem]> search-results: [];
+    in-out property <bool> graph-available: false;
+    in-out property <bool> unsaved: false;
+    in-out property <string> status-message: "";
+    in-out property <StatusKind> status-kind: StatusKind.info;
+
+    // View mode: edit-only | split (editor + preview) | preview-only
+    in-out property <ViewMode> view-mode: ViewMode.split;
+
+    // Open tabs — each tab is an open note
+    in-out property <[TabItem]> open-tabs: [];
+
+    // When true the app shows the vault-picker screen instead of the main editor.
+    in-out property <bool> show-vault-picker: false;
+    in-out property <string> vault-picker-error: "";
+
+    // ── callbacks ────────────────────────────────────────────────────────────
+    callback note-selected(string);
+    callback content-changed(string);
+    callback save-requested();
+    callback new-note-requested();
+    callback rename-requested(string, string);
+    callback delete-requested(string);
+    callback search-changed(string);
+    callback vault-open-requested(string);
+    // toggle-preview kept for Ctrl+P backward compat — cycles view mode
+    callback toggle-preview();
+    // tab-closed(id) — user clicked × on a tab
+    callback tab-closed(string);
+
+    // ── Vault picker screen ──────────────────────────────────────────────────
+    if root.show-vault-picker: Rectangle {
+        background: #1e1e2e;
+
+        VerticalBox {
+            alignment: center;
+            spacing: 16px;
+            padding: 40px;
+
+            Text {
+                text: "Welcome to Rustidian";
+                color: #cba6f7;
+                font-size: 22px;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Enter the path to the folder where your notes are stored.\nIf the folder does not exist it will be created.";
+                color: #6c7086;
+                font-size: 13px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            HorizontalBox {
+                spacing: 8px;
+                alignment: center;
+
+                vault-path-input := LineEdit {
+                    placeholder-text: "/home/user/Notes";
+                    preferred-width: 380px;
+                    accepted(path) => {
+                        if path != "" {
+                            root.vault-open-requested(path);
+                        }
+                    }
+                }
+
+                Button {
+                    text: "Open vault";
+                    clicked => {
+                        if vault-path-input.text != "" {
+                            root.vault-open-requested(vault-path-input.text);
+                        }
+                    }
+                }
+            }
+
+            if root.vault-picker-error != "": Text {
+                text: root.vault-picker-error;
+                color: #f38ba8;
+                font-size: 12px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: "Tip: you can also set the RUSTIDIAN_VAULT environment variable\nbefore launching to skip this screen.";
+                color: #313244;
+                font-size: 11px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    // ── Main editor layout ───────────────────────────────────────────────────
+    if !root.show-vault-picker: HorizontalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        // Sidebar
+        sidebar := Sidebar {
+            min-width: 160px;
+            preferred-width: 220px;
+            horizontal-stretch: 0;
+            notes: root.notes;
+            search-results: root.search-results;
+            backlinks: root.backlinks;
+            current-note-id: root.current-note-id;
+            graph-available: root.graph-available;
+            note-selected(id) => { root.note-selected(id); }
+            new-note-requested() => { root.new-note-requested(); }
+            delete-requested(id) => { root.delete-requested(id); }
+            search-changed(q) => { root.search-changed(q); }
+            vault-change-requested() => { root.show-vault-picker = true; }
+            rename-requested(id, new-title) => { root.rename-requested(id, new-title); }
+        }
+
+        // Main content column
+        VerticalBox {
+            horizontal-stretch: 1;
+            padding: 0px;
+            spacing: 0px;
+
+            // ── Tab bar ──────────────────────────────────────────────────────
+            Rectangle {
+                height: root.open-tabs.length > 0 ? 36px : 0px;
+                background: #11111b;
+                clip: true;
+
+                Rectangle {
+                    height: 1px;
+                    y: parent.height - 1px;
+                    background: #313244;
+                }
+
+                HorizontalBox {
+                    padding: 0px;
+                    spacing: 0px;
+                    alignment: start;
+
+                    for tab in root.open-tabs: Rectangle {
+                        width: tab-inner.preferred-width + 32px;
+                        height: parent.height;
+                        background: tab.id == root.current-note-id ? #1e1e2e : transparent;
+
+                        // Active tab bottom border
+                        Rectangle {
+                            y: parent.height - 2px;
+                            height: 2px;
+                            width: parent.width;
+                            background: tab.id == root.current-note-id ? #cba6f7 : transparent;
+                        }
+
+                        tab-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { root.note-selected(tab.id); }
+                        }
+
+                        if tab-touch.has-hover && tab.id != root.current-note-id: Rectangle {
+                            background: #252535;
+                            width: parent.width;
+                            height: parent.height;
+                        }
+
+                        HorizontalBox {
+                            padding-left: 10px;
+                            padding-right: 4px;
+                            spacing: 4px;
+                            alignment: center;
+
+                            tab-inner := Text {
+                                text: (tab.unsaved ? "● " : "") + tab.title;
+                                color: tab.id == root.current-note-id ? #cdd6f4 : #6c7086;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                max-width: 160px;
+                            }
+
+                            // Close tab button
+                            close-touch := TouchArea {
+                                width: 18px;
+                                height: 18px;
+                                mouse-cursor: pointer;
+                                clicked => { root.tab-closed(tab.id); }
+
+                                Rectangle {
+                                    background: close-touch.has-hover ? #3d1a25 : transparent;
+                                    border-radius: 3px;
+                                    width: parent.width;
+                                    height: parent.height;
+
+                                    Text {
+                                        text: "×";
+                                        color: close-touch.has-hover ? #f38ba8 : #45475a;
+                                        font-size: 14px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Toolbar ──────────────────────────────────────────────────────
+            Rectangle {
+                height: 42px;
+                background: #181825;
+
+                Rectangle {
+                    height: 1px;
+                    y: parent.height - 1px;
+                    background: #313244;
+                }
+
+                HorizontalBox {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    alignment: space-between;
+
+                    // Left: current note title (read-only — rename via sidebar right-click)
+                    HorizontalBox {
+                        spacing: 8px;
+                        alignment: start;
+                        horizontal-stretch: 1;
+
+                        if root.current-note-id != "": Text {
+                            text: root.current-note-title != "" ? root.current-note-title : root.current-note-id;
+                            color: #cdd6f4;
+                            font-size: 14px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    // Right: view-mode buttons + save badge + save
+                    HorizontalBox {
+                        spacing: 6px;
+                        alignment: end;
+                        horizontal-stretch: 0;
+
+                        // View mode buttons — Edit / Split / Preview
+                        if root.current-note-id != "": Rectangle {
+                            width: mode-row.preferred-width + 6px;
+                            height: 28px;
+                            background: #1e1e2e;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: #313244;
+
+                            mode-row := HorizontalBox {
+                                padding: 3px;
+                                spacing: 2px;
+                                alignment: center;
+
+                                // Edit button
+                                edit-btn-touch := TouchArea {
+                                    width: 44px;
+                                    height: 22px;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.view-mode = ViewMode.edit; }
+
+                                    Rectangle {
+                                        background: root.view-mode == ViewMode.edit ? #313244 : (edit-btn-touch.has-hover ? #252535 : transparent);
+                                        border-radius: 3px;
+                                        width: parent.width;
+                                        height: parent.height;
+
+                                        Text {
+                                            text: "Edit";
+                                            color: root.view-mode == ViewMode.edit ? #cdd6f4 : #6c7086;
+                                            font-size: 11px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+                                }
+
+                                // Split button
+                                split-btn-touch := TouchArea {
+                                    width: 44px;
+                                    height: 22px;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.view-mode = ViewMode.split; }
+
+                                    Rectangle {
+                                        background: root.view-mode == ViewMode.split ? #313244 : (split-btn-touch.has-hover ? #252535 : transparent);
+                                        border-radius: 3px;
+                                        width: parent.width;
+                                        height: parent.height;
+
+                                        Text {
+                                            text: "Split";
+                                            color: root.view-mode == ViewMode.split ? #cdd6f4 : #6c7086;
+                                            font-size: 11px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+                                }
+
+                                // Preview button
+                                prev-btn-touch := TouchArea {
+                                    width: 58px;
+                                    height: 22px;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.view-mode = ViewMode.preview; }
+
+                                    Rectangle {
+                                        background: root.view-mode == ViewMode.preview ? #313244 : (prev-btn-touch.has-hover ? #252535 : transparent);
+                                        border-radius: 3px;
+                                        width: parent.width;
+                                        height: parent.height;
+
+                                        Text {
+                                            text: "Preview";
+                                            color: root.view-mode == ViewMode.preview ? #cdd6f4 : #6c7086;
+                                            font-size: 11px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.current-note-id != "": Rectangle {
+                            width: save-status-text.preferred-width + 16px;
+                            height: 26px;
+                            border-radius: 4px;
+                            background: root.unsaved ? #3d1a25 : #1a3d22;
+
+                            save-status-text := Text {
+                                text: root.unsaved ? "Unsaved" : "✓ Saved";
+                                color: root.unsaved ? #f38ba8 : #a6e3a1;
+                                font-size: 12px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                                width: parent.width;
+                            }
+                        }
+
+                        Button {
+                            text: "Save";
+                            height: 28px;
+                            horizontal-stretch: 0;
+                            enabled: root.current-note-id != "" && root.unsaved;
+                            clicked => { root.save-requested(); }
+                        }
+                    }
+                }
+            }
+
+            // ── Empty state ──────────────────────────────────────────────────
+            if root.current-note-id == "": Rectangle {
+                background: #1e1e2e;
+                vertical-stretch: 1;
+
+                VerticalBox {
+                    alignment: center;
+                    spacing: 12px;
+
+                    Text {
+                        text: "No note selected";
+                        color: #6c7086;
+                        font-size: 18px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Select a note from the sidebar, or press Ctrl+N to create one.";
+                        color: #45475a;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // ── Editor / Preview area ────────────────────────────────────────
+            if root.current-note-id != "": HorizontalBox {
+                padding: 0px;
+                spacing: 0px;
+                vertical-stretch: 1;
+
+                // Edit pane — shown in Edit and Split modes
+                if root.view-mode == ViewMode.edit || root.view-mode == ViewMode.split: Editor {
+                    horizontal-stretch: 1;
+                    content: root.current-note-content;
+                    content-changed(t) => { root.content-changed(t); }
+                }
+
+                // Vertical divider between editor and preview in Split mode
+                if root.view-mode == ViewMode.split: Rectangle {
+                    width: 1px;
+                    background: #313244;
+                    horizontal-stretch: 0;
+                }
+
+                // Preview pane — shown in Split and Preview modes
+                if root.view-mode == ViewMode.split || root.view-mode == ViewMode.preview: Preview {
+                    horizontal-stretch: 1;
+                    html: root.preview-html;
+                }
+            }
+
+            // ── Status bar ───────────────────────────────────────────────────
+            Rectangle {
+                height: 28px;
+                background: #11111b;
+
+                Rectangle {
+                    height: 1px;
+                    y: 0px;
+                    background: #313244;
+                }
+
+                HorizontalBox {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    alignment: space-between;
+
+                    Text {
+                        text: root.status-message;
+                        color: root.status-kind == StatusKind.error ? #f38ba8
+                             : root.status-kind == StatusKind.success ? #a6e3a1
+                             : #6c7086;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: "Ctrl+N · New   Ctrl+S · Save   Ctrl+P · Cycle view";
+                        color: #313244;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                        min-width: 0px;
+                        overflow: elide;
+                        horizontal-stretch: 0;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Keyboard shortcuts ───────────────────────────────────────────────────
+    forward-focus: key-handler;
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.modifiers.control && event.text == "s") {
+                root.save-requested();
+                return accept;
+            }
+            if (event.modifiers.control && event.text == "n") {
+                root.new-note-requested();
+                return accept;
+            }
+            if (event.modifiers.control && event.text == "p") {
+                root.toggle-preview();
+                return accept;
+            }
+            reject
+        }
+    }
+}

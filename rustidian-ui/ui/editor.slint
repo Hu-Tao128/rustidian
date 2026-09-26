@@ -1,0 +1,30 @@
+import { TextEdit } from "std-widgets.slint";
+
+export component Editor inherits Rectangle {
+    background: #1e1e2e;
+
+    in-out property <string> content: "";
+    callback content-changed(string);
+
+    // Left border — visual separator
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        background: #313244;
+    }
+
+    // TextEdit fills the parent directly — its own scrollbar handles overflow.
+    TextEdit {
+        x: 1px;
+        y: 0px;
+        width: parent.width - 1px;
+        height: parent.height;
+        text <=> root.content;
+        font-size: 14px;
+        font-family: "monospace";
+        wrap: word-wrap;
+        edited(t) => { root.content-changed(t); }
+    }
+}

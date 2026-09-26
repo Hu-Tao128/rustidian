@@ -1,0 +1,48 @@
+import { ScrollView } from "std-widgets.slint";
+
+// Preview pane: displays rendered Markdown with readable styling.
+// Slint has no HTML renderer, so we render the pre-processed plain-text
+// produced by `markdown::to_plain` — headings, bullets, code blocks, etc.
+export component Preview inherits Rectangle {
+    background: #1f2335;
+
+    // Contains pre-processed Markdown text from to_plain()
+    in property <string> html: "";
+
+    ScrollView {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+
+        // Single VerticalLayout child — its preferred-height drives the viewport
+        // so ScrollView knows how tall the scrollable area is.
+        VerticalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 20px;
+            padding-bottom: 32px;
+            // Width must be constrained so word-wrap can compute line breaks
+            // and thus report the correct preferred-height to ScrollView.
+            width: parent.width;
+
+            // Placeholder when content is empty
+            if root.html == "": Text {
+                text: "Nothing to preview yet.\nStart typing in the editor.";
+                color: #45475a;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+
+            // Rendered Markdown text
+            if root.html != "": Text {
+                text: root.html;
+                color: #cdd6f4;
+                font-size: 15px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

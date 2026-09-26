@@ -1,0 +1,46 @@
+import { VerticalBox, Button } from "std-widgets.slint";
+import { Image } from "std-widgets.slint";
+
+// Graph view — only shows content when the `graph` feature is enabled.
+// The .slint file is always compiled; visibility is controlled from Rust via
+// `set_graph_available(cfg!(feature = "graph"))`.
+export component GraphView inherits Rectangle {
+    background: #1e1e2e;
+
+    in property <bool> graph-available: false;
+    // When the graph feature is compiled in, Rust sets this to an image.
+    in property <image> graph-image;
+
+    callback layout-requested();
+
+    if !root.graph-available: VerticalBox {
+        alignment: center;
+
+        Text {
+            text: "Graph view is not enabled in this build.";
+            color: #6c7086;
+            font-size: 14px;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Rebuild with --features graph to enable it.";
+            color: #6c7086;
+            font-size: 12px;
+            horizontal-alignment: center;
+        }
+    }
+
+    if root.graph-available: VerticalBox {
+        alignment: center;
+
+        Image {
+            source: root.graph-image;
+            image-fit: contain;
+        }
+
+        Button {
+            text: "Recalculate layout";
+            clicked => { root.layout-requested(); }
+        }
+    }
+}
