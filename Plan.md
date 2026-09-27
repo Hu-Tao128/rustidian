@@ -315,3 +315,93 @@ Cómo se organiza en la práctica:
 - [ ]  `cargo test --workspace`
 - [ ]  Si tocaste UI o algo sensible a rendimiento: probarlo en el T60 real, en `--release`
 - [ ]  Si agregaste una feature visible: una línea en `CHANGELOG.md`
+
+---
+
+## 13. Actualización V6 — subcarpetas, preview por bloques, edición y temas
+
+Esta sección documenta la segunda iteración del proyecto. No invalida los
+principios de las secciones 1–12: siguen vigentes.
+
+### 13.1 Subcarpetas en el vault
+
+- `NoteId` **no cambia**: sigue siendo la ruta relativa al vault (ahora puede
+  incluir subcarpetas, p. ej. `"Proyectos/2024/nota.md"`).
+- `vault::list_notes` escanea recursivamente con `walkdir::WalkDir` y filtra
+  solo archivos `.md`.
+- Se agrega `vault::FolderNode` y `vault::list_notes_tree`, que agrupan las
+  notas por carpeta padre en un árbol simple (nombre + notas propias +
+  subcarpetas hijas). Devuelve un único nodo raíz (`path == ""`).
+- `vault::create_note_in(vault, folder, title)` crea la nota en una carpeta
+  (creando los directorios intermedios) y `rename_note` conserva la carpeta.
+- En la UI, el sidebar es un árbol expandible/colapsable. El estado de
+  expansión vive en `AppData::expanded` (no está hardcodeado) y la carpeta
+  seleccionada en `AppData::selected_folder`; las notas nuevas se crean ahí.
+- **Pendiente (mejora futura):** arrastrar y soltar para mover notas.
+
+### 13.2 Preview de Markdown por bloques
+
+- Ya no se usa `pulldown_cmark::html::push_html()`. `markdown::parse_blocks`
+  consume los eventos del `Parser` y construye un árbol propio `Block`/`Inline`
+  (ver `rustidian-core/src/markdown.rs`).
+- El core expone el árbol; la UI lo aplana a un modelo `[BlockItem]` y lo
+  renderiza con un componente por variante: `heading.slint`,
+  `paragraph.slint`, `list_item.slint`, `task_item.slint` (CheckBox real),
+  `code_block.slint` (fondo + monoespaciada), `block_quote.slint`,
+  `table_block.slint` (GridLayout real) y `thematic_break.slint`.
+- El contenido inline se serializa a CommonMark y se renderiza con
+  `StyledText` (negritas, cursivas, tachado, código inline y enlaces).
+- Nota de prueba exhaustiva: `vault-ejemplo/00 Markdown prueba.md`.
+
+### 13.3 Asistencia de edición
+
+Vive **solo en `rustidian-ui`** (`src/editor_assist.rs` + `ui/editor.slint`);
+no toca `rustidian-core`. El editor usa el `TextInput` de bajo nivel para
+acceder a los offsets de cursor/selección.
+
+1. **Auto-continuar listas** con Enter (`- item`, `1. item`, `- [ ] task`);
+   un ítem vacío sale de la lista.
+2. **Auto-cerrar pares** `**`, `_`, `` ` `` y `[[`, envolviendo la selección si
+   hay texto seleccionado.
+3. **Autocompletado de wikilinks**: al escribir `[[` se muestra una lista
+   filtrada de títulos existentes; Tab o Enter insertan `[[Nombre]]`.
+
+### 13.4 Temas Catppuccin
+
+- `ui/theme.slint` define `global Palette` con exactamente un rol por color
+  semántico: `bg`, `surface`, `card`, `border`, `text`, `text-muted`, `accent`,
+  `success`, `danger`, `warning`. **Regla estricta:** ningún otro `.slint` usa
+  hex directo.
+- Valores Catppuccin:
+
+  | Rol | Mocha | Latte |
+  |---|---|---|
+  | bg | `#1e1e2e` base | `#eff1f5` base |
+  | surface | `#181825` mantle | `#e6e9ef` mantle |
+  | card | `#313244` surface0 | `#ccd0da` surface0 |
+  | border | `#45475a` surface1 | `#bcc0cc` surface1 |
+  | text | `#cdd6f4` text | `#4c4f69` text |
+  | text-muted | `#a6adc8` subtext0 | `#6c6f85` subtext0 |
+  | accent | `#74c7ec` sapphire | `#209fb5` sapphire |
+  | success | `#a6e3a1` green | `#40a02b` green |
+  | danger | `#f38ba8` red | `#d20f39` red |
+  | warning | `#f9e2af` yellow | `#df8e1d` yellow |
+
+- Mocha (oscuro) y Latte (claro); `apply_theme()` en Rust sobreescribe el
+  `Palette`.
+- Botón en la barra y atajo `Ctrl+T`; la elección se persiste como
+  `dark_mode` en `config.toml`.
+
+### 13.5 Selector de carpeta nativo
+
+El primer arranque y el botón "Change vault…" abren el explorador de archivos
+nativo con `rfd` (backend GTK3), en vez de pedir una URL escrita.
+
+### 13.6 Reglas que se mantienen
+
+- `rustidian-core` sigue sin importar `slint`.
+- La UI no llama `std::fs` directamente.
+- Toda dependencia nueva (`rfd`) está justificada: no hay API de diálogos
+  nativos en `std` y Slint no la incluye.
+- `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
+  y `cargo test --workspace` deben pasar limpios.

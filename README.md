@@ -9,13 +9,20 @@ Plain `.md` files in a plain folder — no database, no proprietary format.
 ## Features
 
 - **Create, edit, rename and delete** Markdown notes
-- **Live preview** (toggle with a button or hide to save CPU)
+- **Subfolders** — the vault is scanned recursively and the sidebar shows an expandable folder tree
+- **Live preview** rendered from a real block model (headings, paragraphs, lists, task lists, code blocks, nested quotes, tables and horizontal rules) with native bold/italic/strikethrough/inline-code/links via Slint's `StyledText`
 - **Autosave** with a 600 ms debounce — writes to disk only after you pause typing
 - **Full-text search** across titles and note contents with a 150 ms debounce
 - **Wikilinks** — `[[Note name]]` and `[[Note|alias]]` syntax
 - **Backlinks** — each note shows which other notes link to it
-- **Keyboard shortcuts** — `Ctrl+S` save, `Ctrl+N` new note
-- **Persistent config** — vault path saved to `~/.config/rustidian/config.toml`
+- **Markdown editing assistance**
+  - Auto-continue lists (`- item`, `1. item`, `- [ ] task`) on Enter; pressing Enter on an empty item leaves the list
+  - Auto-closing pairs for `**`, `_`, `` ` `` and `[[`, wrapping the current selection when there is one
+  - Wikilink autocomplete: type `[[` and pick from the live-filtered list of note titles with Tab/Enter
+- **Catppuccin themes** — Mocha (dark) and Latte (light), toggled from the toolbar or with `Ctrl+T`, persisted in the config file
+- **Native folder picker** — choosing or changing the vault opens the system file explorer instead of typing a path
+- **Keyboard shortcuts** — `Ctrl+S` save, `Ctrl+N` new note, `Ctrl+P` cycle view, `Ctrl+T` toggle theme
+- **Persistent config** — vault path and theme saved to `~/.config/rustidian/config.toml`
 - **Optional graph view** — force-directed layout behind a Cargo feature flag; the default binary never compiles or loads `petgraph`
 
 ---
@@ -24,6 +31,7 @@ Plain `.md` files in a plain folder — no database, no proprietary format.
 
 - Rust 1.70 or later (`rustup update stable`)
 - A working C linker (`build-essential` / `gcc` on Debian-based distros)
+- GTK3 development headers (used only for the native folder dialog)
 - X11 or Wayland display server (Slint uses `winit` + software renderer by default)
 
 ---
@@ -56,7 +64,9 @@ The binary lands in `target/release/rustidian-ui`.
 RUSTIDIAN_VAULT=/path/to/my/notes ./target/release/rustidian-ui
 ```
 
-The vault path is persisted to `~/.config/rustidian/config.toml` after the first successful run, so you only need the env var once.
+On first launch Rustidian asks you to choose a vault folder through the native
+file dialog. The choice is persisted to `~/.config/rustidian/config.toml`, so
+you only need the env var once.
 
 ---
 
@@ -66,8 +76,9 @@ The vault path is persisted to `~/.config/rustidian/config.toml` after the first
 rustidian/
 ├── rustidian-core/      # Pure logic: vault CRUD, Markdown, links, search
 │   └── src/
-│       ├── vault.rs     # list / read / write / create / rename / delete notes
-│       ├── markdown.rs  # pulldown-cmark wrapper → HTML
+│       ├── vault.rs     # list / read / write / create / rename / delete,
+│       │                # recursive scan + FolderNode tree (list_notes_tree)
+│       ├── markdown.rs  # pulldown-cmark events -> Block/Inline tree
 │       ├── links.rs     # wikilink parser + bidirectional index
 │       ├── search.rs    # case-insensitive full-text search
 │       ├── config.rs    # load/save ~/.config/rustidian/config.toml
@@ -76,16 +87,21 @@ rustidian/
 │
 ├── rustidian-ui/        # Slint UI binary
 │   ├── src/
-│   │   ├── main.rs      # wires core ↔ UI, timers, callbacks
-│   │   ├── bridge.rs    # NoteMeta → NoteItem / BacklinkItem conversions
-│   │   └── worker.rs    # background threads + slint::invoke_from_event_loop
+│   │   ├── main.rs        # wires core ↔ UI, timers, callbacks, theming
+│   │   ├── bridge.rs      # core types -> Slint models (blocks + tree)
+│   │   ├── editor_assist.rs # list continuation, auto-pairs, wikilinks
+│   │   └── worker.rs      # background threads + slint::invoke_from_event_loop
 │   └── ui/
-│       ├── main.slint   # AppWindow, toolbar, keyboard shortcuts
-│       ├── sidebar.slint
-│       ├── editor.slint
-│       ├── preview.slint
+│       ├── main.slint     # AppWindow, toolbar, keyboard shortcuts
+│       ├── theme.slint    # Catppuccin `global Palette` (only place with hex)
+│       ├── sidebar.slint  # expandable folder tree + backlinks
+│       ├── editor.slint   # low-level TextInput + editing assistance
+│       ├── preview.slint  # renders the BlockItem model
+│       ├── heading.slint / paragraph.slint / list_item.slint /
+│       │   task_item.slint / code_block.slint / block_quote.slint /
+│       │   table_block.slint / thematic_break.slint
 │       ├── graph_view.slint
-│       └── types.slint  # shared NoteItem / BacklinkItem structs
+│       └── types.slint    # shared structs and enums
 │
 └── vault-ejemplo/       # Sample notes for development (never your real vault)
 ```
@@ -101,6 +117,70 @@ rustidian/
 | Default vault | `~/Notes` (created automatically on first run) |
 | Env var | `RUSTIDIAN_VAULT=/path` — applied once, then persisted |
 | Config file | `~/.config/rustidian/config.toml` |
+| Theme | `dark_mode = true` (Mocha) / `false` (Latte) |
+
+Example `config.toml`:
+
+```toml
+vault_path = "/home/user/Notes"
+dark_mode = true
+```
+
+---
+
+## Markdown preview model
+
+The preview no longer relies on `pulldown_cmark::html::push_html()`. Instead,
+`rustidian_core::markdown::parse_blocks` consumes the parser's event stream and
+builds a UI-agnostic tree:
+
+```rust
+enum Block {
+    Heading(u8, Vec<Inline>),
+    Paragraph(Vec<Inline>),
+    List { ordered: bool, items: Vec<Vec<Block>> },
+    TaskList(Vec<(bool, Vec<Inline>)>),
+    CodeBlock { lang: Option<String>, code: String },
+    BlockQuote(Vec<Block>),
+    Table { headers: Vec<String>, rows: Vec<Vec<String>> },
+    ThematicBreak,
+}
+```
+
+Rust flattens this into a `[BlockItem]` model (nesting expressed with an
+`indent` field, tables as a flat cell array plus a column count) and Slint
+renders each kind with a dedicated component. Inline spans are serialised to
+CommonMark and parsed by Slint's `StyledText` element, which natively renders
+bold, italic, strikethrough, inline code and links.
+
+`vault-ejemplo/00 Markdown prueba.md` is a test note that covers every case:
+bold, italic, strikethrough, inline code, fenced code with a language, links,
+images, nested lists, task lists, nested block quotes, tables and a horizontal
+rule.
+
+---
+
+## Themes
+
+All colours live in `ui/theme.slint` (`global Palette`); no other `.slint` file
+uses a literal colour. The two themes are Catppuccin Mocha (dark) and Latte
+(light):
+
+| Role | Mocha | Latte |
+|---|---|---|
+| `bg` — main background | `#1e1e2e` | `#eff1f5` |
+| `surface` — sidebar / panels | `#181825` | `#e6e9ef` |
+| `card` — cards / active tabs | `#313244` | `#ccd0da` |
+| `border` — borders / dividers | `#45475a` | `#bcc0cc` |
+| `text` — primary text | `#cdd6f4` | `#4c4f69` |
+| `text-muted` — secondary text | `#a6adc8` | `#6c6f85` |
+| `accent` — buttons, focus, links | `#74c7ec` | `#209fb5` |
+| `success` — "Saved" | `#a6e3a1` | `#40a02b` |
+| `danger` — delete | `#f38ba8` | `#d20f39` |
+| `warning` | `#f9e2af` | `#df8e1d` |
+
+Toggle with the toolbar button or `Ctrl+T`; the choice is stored as
+`dark_mode` in `config.toml`.
 
 ---
 
@@ -127,8 +207,9 @@ Use `vault-ejemplo/` for development — never point a dev build at your real no
 ## Known limitations (v1)
 
 - **Renaming a note breaks existing `[[links]]`** — same behaviour as Obsidian without the "update links on rename" plugin. Tracked as a future improvement (stable IDs via YAML frontmatter).
-- **No native folder picker** — change the vault via the `RUSTIDIAN_VAULT` env var; a native dialog is planned for a later version.
-- **Preview shows raw HTML** — Slint has no built-in HTML renderer; a proper rendered preview would require embedding a WebView.
+- **Images in the preview are shown as labelled links** — Slint's `StyledText` has no inline image support, so `![alt](url)` renders as a clickable `🖼 alt` link.
+- **No drag-and-drop to move notes** — planned as a future improvement.
+- **The graph view is opt-in** — build with `--features graph` on machines that can afford the layout calculation.
 
 ---
 
@@ -142,6 +223,8 @@ Use `vault-ejemplo/` for development — never point a dev build at your real no
 | V3 — full-text search | ✅ done |
 | V4 — UX polish (shortcuts, indicators, first-run) | ✅ done |
 | V5 — graph view (`--features graph`) | 🔧 scaffolded, layout implemented |
+| V6 — subfolders, block preview, editing assistance, themes | ✅ done |
+| V7 — drag-and-drop note moving | 📋 planned |
 
 ---
 
