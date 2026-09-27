@@ -1,24 +1,27 @@
-import { VerticalBox, HorizontalBox, Button, LineEdit, ListView, ScrollView } from "std-widgets.slint";
-import { NoteItem, BacklinkItem } from "types.slint";
+import { VerticalBox, HorizontalBox, Button, LineEdit, ListView } from "std-widgets.slint";
+import { NoteItem, BacklinkItem, TreeRow, TreeRowKind } from "types.slint";
+import { Palette } from "theme.slint";
 
 export component Sidebar inherits Rectangle {
-    background: #181825;
+    background: Palette.surface;
     border-width: 0px;
 
-    in-out property <[NoteItem]> notes: [];
+    in-out property <[TreeRow]> tree: [];
     in-out property <[NoteItem]> search-results: [];
     in-out property <[BacklinkItem]> backlinks: [];
     in-out property <string> current-note-id: "";
     in-out property <bool> graph-available: false;
+    in property <int> note-count: 0;
 
     callback note-selected(string);
+    callback folder-toggled(string);
     callback new-note-requested();
     callback delete-requested(string);
     callback search-changed(string);
     callback vault-change-requested();
     callback rename-requested(string, string);   // (id, new-title)
 
-    // Which list to show: notes or search results
+    // Which list to show: tree or search results
     property <bool> searching: search-box.text != "";
 
     // Which note row is showing the delete confirmation
@@ -39,15 +42,15 @@ export component Sidebar inherits Rectangle {
 
             Text {
                 text: "Rustidian";
-                color: #cba6f7;
+                color: Palette.accent;
                 font-size: 15px;
                 font-weight: 700;
                 vertical-alignment: center;
             }
 
             if !root.searching: Text {
-                text: root.notes.length == 0 ? "" : root.notes.length + " notes";
-                color: #45475a;
+                text: root.note-count == 0 ? "" : root.note-count + " notes";
+                color: Palette.text-muted;
                 font-size: 11px;
                 vertical-alignment: center;
                 horizontal-alignment: right;
@@ -55,14 +58,14 @@ export component Sidebar inherits Rectangle {
 
             if root.searching: Text {
                 text: root.search-results.length + " results";
-                color: #89b4fa;
+                color: Palette.accent;
                 font-size: 11px;
                 vertical-alignment: center;
                 horizontal-alignment: right;
             }
         }
 
-        Rectangle { height: 1px; background: #313244; }
+        Rectangle { height: 1px; background: Palette.border; }
 
         // ── Search box ────────────────────────────────────────────────────────
         search-box := LineEdit {
@@ -79,7 +82,7 @@ export component Sidebar inherits Rectangle {
         // ── Section label ─────────────────────────────────────────────────────
         Text {
             text: root.searching ? "SEARCH RESULTS" : "NOTES";
-            color: #45475a;
+            color: Palette.text-muted;
             font-size: 10px;
             font-weight: 700;
             letter-spacing: 0.8px;
@@ -88,12 +91,12 @@ export component Sidebar inherits Rectangle {
         }
 
         // ── Empty states ──────────────────────────────────────────────────────
-        if !root.searching && root.notes.length == 0: Rectangle {
+        if !root.searching && root.tree.length == 0: Rectangle {
             height: 60px;
             background: transparent;
             Text {
                 text: "No notes yet.\nPress + New note to start.";
-                color: #45475a;
+                color: Palette.text-muted;
                 font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -107,7 +110,7 @@ export component Sidebar inherits Rectangle {
             background: transparent;
             Text {
                 text: "No notes match your search.";
-                color: #45475a;
+                color: Palette.text-muted;
                 font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -115,31 +118,73 @@ export component Sidebar inherits Rectangle {
             }
         }
 
-        // ── Note list ─────────────────────────────────────────────────────────
-        note-list := ListView {
+        // ── Tree / search list ────────────────────────────────────────────────
+        if !root.searching: ListView {
             vertical-stretch: 1;
 
-            for item in (root.searching ? root.search-results : root.notes): Rectangle {
-                // Row height varies by state
-                height: item.id == root.pending-delete-id ? 56px
-                      : item.id == root.renaming-id      ? 40px
-                      : item.folder != ""                 ? 46px
-                      : 34px;
-                background: item.id == root.pending-delete-id
-                    ? #3d1a25
-                    : (item.id == root.current-note-id ? #313244 : transparent);
+            for row in root.tree: Rectangle {
+                height: row.kind == TreeRowKind.note && row.id == root.pending-delete-id ? 56px
+                      : row.kind == TreeRowKind.note && row.id == root.renaming-id      ? 40px
+                      : row.kind == TreeRowKind.folder                                  ? 26px
+                      : 30px;
+                background: row.kind == TreeRowKind.note && row.id == root.pending-delete-id
+                    ? Palette.card
+                    : (row.kind == TreeRowKind.note && row.id == root.current-note-id
+                        ? Palette.card
+                        : (row.kind == TreeRowKind.folder && row.is-selected-folder
+                            ? Palette.card
+                            : transparent));
                 border-radius: 4px;
 
-                // ── Delete-confirm row ────────────────────────────────────────
-                if item.id == root.pending-delete-id: VerticalBox {
+                // ── Folder row ────────────────────────────────────────────────
+                if row.kind == TreeRowKind.folder: Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: transparent;
+
+                    folder-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { root.folder-toggled(row.id); }
+                    }
+
+                    HorizontalBox {
+                        padding-left: 8px + row.depth * 14px;
+                        padding-right: 6px;
+                        spacing: 4px;
+                        alignment: start;
+
+                        Text {
+                            text: row.expanded ? "▾" : "▸";
+                            color: Palette.text-muted;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            width: 12px;
+                        }
+
+                        Text {
+                            text: "📁 " + row.name;
+                            color: row.is-selected-folder ? Palette.text : Palette.text;
+                            font-size: 13px;
+                            font-weight: row.is-selected-folder ? 600 : 500;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+
+                // ── Note: delete-confirm row ──────────────────────────────────
+                if row.kind == TreeRowKind.note && row.id == root.pending-delete-id: VerticalBox {
                     padding: 4px;
                     spacing: 4px;
                     width: parent.width;
                     height: parent.height;
 
                     Text {
-                        text: "Delete \"" + item.title + "\"?";
-                        color: #f38ba8;
+                        text: "Delete \"" + row.name + "\"?";
+                        color: Palette.danger;
                         font-size: 12px;
                         font-weight: 600;
                         overflow: elide;
@@ -151,7 +196,7 @@ export component Sidebar inherits Rectangle {
                             text: "Delete";
                             height: 22px;
                             clicked => {
-                                root.delete-requested(item.id);
+                                root.delete-requested(row.id);
                                 root.pending-delete-id = "";
                             }
                         }
@@ -163,29 +208,27 @@ export component Sidebar inherits Rectangle {
                     }
                 }
 
-                // ── Inline-rename row ─────────────────────────────────────────
-                if item.id == root.renaming-id && item.id != root.pending-delete-id: HorizontalBox {
-                    padding-left: 8px;
+                // ── Note: inline-rename row ───────────────────────────────────
+                if row.kind == TreeRowKind.note && row.id == root.renaming-id && row.id != root.pending-delete-id: HorizontalBox {
+                    padding-left: 8px + row.depth * 14px;
                     padding-right: 4px;
                     spacing: 4px;
                     width: parent.width;
                     height: parent.height;
 
                     rename-edit := LineEdit {
-                        text: item.title;
+                        text: row.name;
                         font-size: 13px;
                         horizontal-stretch: 1;
                         height: 28px;
-                        // Confirm on Enter
                         accepted(new-name) => {
-                            if new-name != "" && new-name != item.title {
-                                root.rename-requested(item.id, new-name);
+                            if new-name != "" && new-name != row.name {
+                                root.rename-requested(row.id, new-name);
                             }
                             root.renaming-id = "";
                         }
                     }
 
-                    // Cancel rename with Escape — small ✕ button
                     cancel-rename := TouchArea {
                         width: 22px;
                         height: 22px;
@@ -193,13 +236,13 @@ export component Sidebar inherits Rectangle {
                         clicked => { root.renaming-id = ""; }
 
                         Rectangle {
-                            background: cancel-rename.has-hover ? #252535 : transparent;
+                            background: cancel-rename.has-hover ? Palette.card : transparent;
                             border-radius: 3px;
                             width: parent.width;
                             height: parent.height;
                             Text {
                                 text: "✕";
-                                color: #6c7086;
+                                color: Palette.text-muted;
                                 font-size: 11px;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -210,8 +253,8 @@ export component Sidebar inherits Rectangle {
                     }
                 }
 
-                // ── Normal row ────────────────────────────────────────────────
-                if item.id != root.pending-delete-id && item.id != root.renaming-id: Rectangle {
+                // ── Note: normal row ──────────────────────────────────────────
+                if row.kind == TreeRowKind.note && row.id != root.pending-delete-id && row.id != root.renaming-id: Rectangle {
                     width: parent.width;
                     height: parent.height;
                     background: transparent;
@@ -220,82 +263,47 @@ export component Sidebar inherits Rectangle {
                         width: parent.width;
                         height: parent.height;
                         mouse-cursor: pointer;
-                        // Left-click: open note
-                        clicked => { root.note-selected(item.id); }
-                        // Right-click: start inline rename
+                        clicked => { root.note-selected(row.id); }
                         pointer-event(ev) => {
                             if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
-                                root.renaming-id = item.id;
-                                // Cancel any pending delete to avoid conflicting states
+                                root.renaming-id = row.id;
                                 root.pending-delete-id = "";
                             }
                         }
                     }
 
-                    if row-touch.has-hover && item.id != root.current-note-id: Rectangle {
-                        background: #252535;
-                        border-radius: 4px;
-                        width: parent.width;
-                        height: parent.height;
-                    }
-
                     HorizontalBox {
-                        padding-left: item.folder != "" ? 20px : 8px;
+                        padding-left: 8px + row.depth * 14px;
                         padding-right: 4px;
                         alignment: space-between;
 
-                        VerticalBox {
-                            padding: 0px;
-                            spacing: 1px;
-                            alignment: center;
-                            horizontal-stretch: 1;
-                            vertical-stretch: 1;
-
-                            Text {
-                                text: item.title;
-                                color: item.id == root.current-note-id ? #cdd6f4 : #bac2de;
-                                font-size: 13px;
-                                overflow: elide;
-                            }
-
-                            if item.folder != "": Text {
-                                text: "📁 " + item.folder;
-                                color: #45475a;
-                                font-size: 10px;
-                                overflow: elide;
-                                vertical-stretch: 0;
-                            }
-                        }
-
-                        // Right-click hint on hover
-                        if row-touch.has-hover: Text {
-                            text: "⋮";
-                            color: #45475a;
-                            font-size: 14px;
+                        Text {
+                            text: row.name;
+                            color: row.id == root.current-note-id ? Palette.text : Palette.text;
+                            font-size: 13px;
                             vertical-alignment: center;
-                            horizontal-alignment: right;
-                            width: 18px;
+                            overflow: elide;
+                            horizontal-stretch: 1;
                         }
 
-                        // Delete button (always visible as ✕)
                         del-touch := TouchArea {
                             width: 26px;
                             height: 26px;
                             mouse-cursor: pointer;
                             clicked => {
-                                root.pending-delete-id = item.id;
+                                root.pending-delete-id = row.id;
                                 root.renaming-id = "";
                             }
 
                             Rectangle {
-                                background: del-touch.has-hover ? #3d1a25 : transparent;
+                                background: del-touch.has-hover ? Palette.card : transparent;
                                 border-radius: 4px;
                                 width: parent.width;
                                 height: parent.height;
 
                                 Text {
                                     text: "✕";
-                                    color: del-touch.has-hover ? #f38ba8 : #45475a;
+                                    color: del-touch.has-hover ? Palette.danger : Palette.text-muted;
                                     font-size: 12px;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -309,16 +317,52 @@ export component Sidebar inherits Rectangle {
             }
         }
 
+        if root.searching: ListView {
+            vertical-stretch: 1;
+
+            for item in root.search-results: Rectangle {
+                height: 34px;
+                background: item.id == root.current-note-id ? Palette.card : transparent;
+                border-radius: 4px;
+
+                result-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.note-selected(item.id); }
+                }
+
+                if result-touch.has-hover && item.id != root.current-note-id: Rectangle {
+                    background: Palette.card;
+                    border-radius: 4px;
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                HorizontalBox {
+                    padding-left: 8px;
+                    alignment: start;
+                    Text {
+                        text: item.title;
+                        color: item.id == root.current-note-id ? Palette.text : Palette.text;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
         // ── Backlinks ─────────────────────────────────────────────────────────
         if root.backlinks.length > 0: VerticalBox {
             padding: 0px;
             spacing: 4px;
 
-            Rectangle { height: 1px; background: #313244; }
+            Rectangle { height: 1px; background: Palette.border; }
 
             Text {
                 text: "BACKLINKS";
-                color: #45475a;
+                color: Palette.text-muted;
                 font-size: 10px;
                 font-weight: 700;
                 letter-spacing: 0.8px;
@@ -339,7 +383,7 @@ export component Sidebar inherits Rectangle {
                 }
 
                 if bl-hover.has-hover: Rectangle {
-                    background: #252535;
+                    background: Palette.card;
                     border-radius: 4px;
                     width: parent.width;
                     height: parent.height;
@@ -350,7 +394,7 @@ export component Sidebar inherits Rectangle {
                     alignment: start;
                     Text {
                         text: "← " + bl.title;
-                        color: #89b4fa;
+                        color: Palette.accent;
                         font-size: 12px;
                         vertical-alignment: center;
                         overflow: elide;
@@ -361,7 +405,7 @@ export component Sidebar inherits Rectangle {
 
         // Spacer + vault button
         Rectangle { vertical-stretch: 1; }
-        Rectangle { height: 1px; background: #313244; }
+        Rectangle { height: 1px; background: Palette.border; }
         Button {
             text: "⚙  Change vault…";
             clicked => { root.vault-change-requested(); }
@@ -374,6 +418,6 @@ export component Sidebar inherits Rectangle {
         y: 0px;
         width: 1px;
         height: parent.height;
-        background: #313244;
+        background: Palette.border;
     }
 }

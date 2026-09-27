@@ -1,10 +1,23 @@
-import { TextEdit } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { Palette } from "theme.slint";
+import { EditResult } from "types.slint";
 
+// Markdown editor built on the low-level `TextInput` so we have access to the
+// cursor/anchor byte offsets needed for the editing assistance.
 export component Editor inherits Rectangle {
-    background: #1e1e2e;
+    background: Palette.bg;
 
     in-out property <string> content: "";
+    in property <[string]> note-titles: [];
+    in-out property <[string]> suggestions: [];
+    in-out property <bool> show-suggestions: false;
+
     callback content-changed(string);
+    // (key-text, ctrl, shift, alt, content, cursor, anchor) -> result
+    callback handle-edit-key(string, bool, bool, bool, string, int, int) -> EditResult;
+    // (title, content, cursor) -> result
+    callback accept-suggestion(string, string, int) -> EditResult;
+    callback update-suggestions(string, int);
 
     // Left border — visual separator
     Rectangle {
@@ -12,19 +25,103 @@ export component Editor inherits Rectangle {
         y: 0px;
         width: 1px;
         height: parent.height;
-        background: #313244;
+        background: Palette.border;
     }
 
-    // TextEdit fills the parent directly — its own scrollbar handles overflow.
-    TextEdit {
+    scroll := ScrollView {
         x: 1px;
         y: 0px;
         width: parent.width - 1px;
         height: parent.height;
-        text <=> root.content;
-        font-size: 14px;
-        font-family: "monospace";
-        wrap: word-wrap;
-        edited(t) => { root.content-changed(t); }
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, input.preferred-height + 24px);
+
+        input := TextInput {
+            x: 12px;
+            y: 12px;
+            width: scroll.visible-width - 24px;
+            wrap: word-wrap;
+            font-size: 14px;
+            font-family: "monospace";
+            color: Palette.text;
+            single-line: false;
+            selection-background-color: Palette.accent;
+            selection-foreground-color: Palette.bg;
+            text <=> root.content;
+
+            edited => {
+                root.content-changed(self.text);
+                root.update-suggestions(self.text, self.cursor-position-byte-offset);
+            }
+
+            key-pressed(event) => {
+                if (!event.modifiers.control && !event.modifiers.alt && event.text != "") {
+                    let res = root.handle-edit-key(
+                        event.text,
+                        event.modifiers.control,
+                        event.modifiers.shift,
+                        event.modifiers.alt,
+                        self.text,
+                        self.cursor-position-byte-offset,
+                        self.anchor-position-byte-offset
+                    );
+                    if (res.handled) {
+                        self.text = res.text;
+                        self.set-selection-offsets(res.anchor, res.cursor);
+                        root.content-changed(self.text);
+                        root.update-suggestions(self.text, res.cursor);
+                        return accept;
+                    }
+                }
+                reject
+            }
+        }
+    }
+
+    // ── Wikilink completion popup ─────────────────────────────────────────────
+    if root.show-suggestions && root.suggestions.length > 0: Rectangle {
+        x: 16px;
+        width: 260px;
+        y: parent.height - self.height - 12px;
+        height: min(root.suggestions.length, 8) * 24px + 8px;
+        background: Palette.surface;
+        border-width: 1px;
+        border-color: Palette.border;
+        border-radius: 4px;
+        clip: true;
+
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+
+            for title in root.suggestions: Rectangle {
+                height: 24px;
+                background: suggestion-touch.has-hover ? Palette.card : transparent;
+                border-radius: 3px;
+
+                suggestion-touch := TouchArea {
+                    clicked => {
+                        let res = root.accept-suggestion(title, input.text, input.cursor-position-byte-offset);
+                        if (res.handled) {
+                            input.text = res.text;
+                            input.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(input.text);
+                            root.update-suggestions(input.text, res.cursor);
+                        }
+                    }
+                }
+
+                Text {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    height: parent.height;
+                    text: title;
+                    color: Palette.text;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
     }
 }

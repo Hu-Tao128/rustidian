@@ -1,0 +1,28 @@
+import { Palette } from "theme.slint";
+
+// Renders a block-quote line with a left rule and nesting indentation.
+export component BlockQuoteBlock inherits Rectangle {
+    in property <styled-text> markup;
+    in property <int> indent: 0;
+
+    background: transparent;
+    property <length> pad: root.indent * 16px;
+    height: max(quote-text.preferred-height, 18px);
+
+    Rectangle {
+        x: root.pad;
+        y: 0px;
+        width: 3px;
+        height: parent.height;
+        background: Palette.border;
+    }
+
+    quote-text := StyledText {
+        x: root.pad + 10px;
+        width: parent.width - root.pad - 10px;
+        text: root.markup;
+        default-color: Palette.text;
+        default-font-size: 14px;
+        link-color: Palette.accent;
+    }
+}

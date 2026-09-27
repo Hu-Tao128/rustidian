@@ -1,0 +1,30 @@
+import { CheckBox } from "std-widgets.slint";
+import { Palette } from "theme.slint";
+
+// Renders a task-list item with a real checkbox.
+export component TaskItemBlock inherits Rectangle {
+    in-out property <bool> checked;
+    in property <styled-text> markup;
+    in property <int> indent: 0;
+
+    background: transparent;
+    property <length> pad: root.indent * 18px;
+    height: max(28px, row-text.preferred-height);
+
+    CheckBox {
+        x: root.pad;
+        y: 0px;
+        width: 24px;
+        height: parent.height;
+        checked <=> root.checked;
+    }
+
+    row-text := StyledText {
+        x: root.pad + 30px;
+        width: parent.width - root.pad - 30px;
+        text: root.markup;
+        default-color: root.checked ? Palette.text-muted : Palette.text;
+        default-font-size: 14px;
+        link-color: Palette.accent;
+    }
+}

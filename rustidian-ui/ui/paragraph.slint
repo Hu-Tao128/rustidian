@@ -1,0 +1,17 @@
+import { Palette } from "theme.slint";
+
+// Renders a Markdown paragraph with inline styles and links.
+export component ParagraphBlock inherits Rectangle {
+    in property <styled-text> markup;
+
+    background: transparent;
+    height: paragraph-text.preferred-height;
+
+    paragraph-text := StyledText {
+        width: parent.width;
+        text: root.markup;
+        default-color: Palette.text;
+        default-font-size: 14px;
+        link-color: Palette.accent;
+    }
+}

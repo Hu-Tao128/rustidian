@@ -1,0 +1,25 @@
+import { Palette } from "theme.slint";
+
+// Renders a Markdown heading (levels 1-6).
+export component HeadingBlock inherits Rectangle {
+    in property <styled-text> markup;
+    in property <int> level: 1;
+
+    background: transparent;
+    height: heading-text.preferred-height;
+
+    property <length> fs: root.level == 1 ? 26px
+                       : root.level == 2 ? 22px
+                       : root.level == 3 ? 18px
+                       : root.level == 4 ? 16px
+                       : root.level == 5 ? 15px
+                       : 14px;
+
+    heading-text := StyledText {
+        width: parent.width;
+        text: root.markup;
+        default-color: Palette.text;
+        default-font-size: root.fs;
+        link-color: Palette.accent;
+    }
+}

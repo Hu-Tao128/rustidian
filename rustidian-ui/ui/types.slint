@@ -1,4 +1,4 @@
-// Shared data structures used by both main.slint and sidebar.slint.
+// Shared data structures used by the UI components.
 
 export struct NoteItem {
     id: string,
@@ -19,9 +19,73 @@ export struct TabItem {
     unsaved: bool,
 }
 
-// A folder entry for the sidebar tree
-export struct FolderItem {
-    name: string,       // display name of the folder segment
-    path: string,       // full relative path (used to filter notes)
-    collapsed: bool,
+// ── Sidebar tree ─────────────────────────────────────────────────────────────
+
+export enum TreeRowKind {
+    folder,
+    note,
+}
+
+// A single flattened row of the sidebar tree.  The tree itself is expanded into
+// this flat model by Rust; `depth` drives the indentation and `expanded` is the
+// persisted folder state.
+export struct TreeRow {
+    kind: TreeRowKind,
+    depth: int,
+    // For folders: relative folder path. For notes: the note id.
+    id: string,
+    // Display name (folder segment or note title).
+    name: string,
+    // Notes only: relative parent folder (empty for root).
+    folder: string,
+    // Folders only.
+    expanded: bool,
+    has-children: bool,
+    is-selected-folder: bool,
+}
+
+// ── Markdown preview ─────────────────────────────────────────────────────────
+
+export enum BlockKind {
+    heading,
+    paragraph,
+    list-item,
+    task-item,
+    code,
+    quote,
+    table,
+    rule,
+}
+
+// One rendered Markdown block.  `markup` is pre-parsed by Rust into a
+// `styled-text` so Slint can render bold/italic/links/inline code natively.
+export struct BlockItem {
+    kind: BlockKind,
+    // Heading level (1-6) for `heading`, otherwise unused.
+    level: int,
+    // Nesting depth for list items and block quotes.
+    indent: int,
+    // Inline content as StyledText markup (heading/paragraph/list/quote).
+    markup: styled-text,
+    // Code blocks.
+    lang: string,
+    code: string,
+    // Lists.
+    ordered: bool,
+    marker: string,
+    // Task items.
+    checked: bool,
+    // Tables: cells in row-major order (header row first) and column count.
+    cells: [string],
+    columns: int,
+}
+
+// ── Editor assistance ────────────────────────────────────────────────────────
+
+// Result of intercepting a key press in the Markdown editor.
+export struct EditResult {
+    handled: bool,
+    text: string,
+    cursor: int,
+    anchor: int,
 }

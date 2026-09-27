@@ -1,0 +1,33 @@
+import { Palette } from "theme.slint";
+
+// Renders a single list item (ordered or unordered) with nesting indentation.
+export component ListItemBlock inherits Rectangle {
+    in property <string> marker;
+    in property <styled-text> markup;
+    in property <int> indent: 0;
+
+    background: transparent;
+    property <length> pad: root.indent * 18px;
+    height: max(row-text.preferred-height, 18px);
+
+    Text {
+        x: root.pad;
+        y: 0px;
+        width: 26px;
+        height: parent.height;
+        text: root.marker;
+        color: Palette.text-muted;
+        font-size: 13px;
+        horizontal-alignment: right;
+        vertical-alignment: top;
+    }
+
+    row-text := StyledText {
+        x: root.pad + 32px;
+        width: parent.width - root.pad - 32px;
+        text: root.markup;
+        default-color: Palette.text;
+        default-font-size: 14px;
+        link-color: Palette.accent;
+    }
+}

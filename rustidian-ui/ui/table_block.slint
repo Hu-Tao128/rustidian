@@ -1,0 +1,41 @@
+import { Palette } from "theme.slint";
+
+// Renders a Markdown table using a real GridLayout.  `cells` is row-major with
+// the header row first; `columns` is the number of columns.
+export component TableBlock inherits Rectangle {
+    in property <[string]> cells;
+    in property <int> columns: 1;
+
+    background: transparent;
+    height: grid.preferred-height;
+    property <int> cols: max(root.columns, 1);
+
+    grid := GridLayout {
+        width: parent.width;
+        spacing: 0px;
+        padding: 0px;
+
+        for cell[i] in root.cells: Rectangle {
+            row: i / root.cols;
+            col: Math.mod(i, root.cols);
+            border-width: 1px;
+            border-color: Palette.border;
+            background: i < root.cols ? Palette.card : transparent;
+            min-height: 28px;
+
+            Text {
+                x: 8px;
+                y: 0px;
+                width: parent.width - 16px;
+                height: parent.height;
+                text: cell;
+                color: Palette.text;
+                font-size: 13px;
+                font-weight: i < root.cols ? 700 : 400;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                overflow: elide;
+            }
+        }
+    }
+}

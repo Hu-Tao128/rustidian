@@ -7,6 +7,9 @@ edition = "2021"
 rustidian-core = { path = "../rustidian-core" }
 slint = { version = "1.18", default-features = false, features = ["backend-winit", "renderer-software", "compat-1-18"] }
 dirs = "5"
+# Native folder picker.  We use the GTK3 backend (available on X11) instead of
+# the default xdg-portal/wayland stack to keep the old-hardware build lean.
+rfd = { version = "0.17", default-features = false, features = ["gtk3"] }
 
 [build-dependencies]
 slint-build = "1.18"

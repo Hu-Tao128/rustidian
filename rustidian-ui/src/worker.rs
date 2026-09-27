@@ -1,5 +1,6 @@
 use rustidian_core::links::LinkIndex;
-use rustidian_core::vault::NoteMeta;
+use rustidian_core::vault::{FolderNode, NoteMeta};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -8,12 +9,17 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Default)]
 pub struct AppData {
     pub notes: Vec<NoteMeta>,
+    pub tree: Vec<FolderNode>,
     pub link_index: LinkIndex,
     pub vault_path: PathBuf,
+    /// Persisted folder expansion state for the sidebar tree.
+    pub expanded: HashMap<String, bool>,
+    /// Folder selected in the sidebar; new notes are created here.
+    pub selected_folder: String,
 }
 
-/// Spawn a background thread that scans the vault and rebuilds the note list
-/// and link index, then invokes *on_done* on the Slint event loop.
+/// Spawn a background thread that scans the vault and rebuilds the note list,
+/// folder tree and link index, then invokes *on_done* on the Slint event loop.
 pub fn rebuild_index(
     vault: PathBuf,
     shared: Arc<Mutex<AppData>>,
@@ -27,11 +33,13 @@ pub fn rebuild_index(
                 return;
             }
         };
+        let tree = rustidian_core::vault::list_notes_tree(&vault).unwrap_or_default();
         let index = rustidian_core::links::build_index(&vault);
 
         {
             let mut data = shared.lock().unwrap();
             data.notes = notes;
+            data.tree = tree;
             data.link_index = index;
             data.vault_path = vault;
         }

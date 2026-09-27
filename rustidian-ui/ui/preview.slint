@@ -1,13 +1,22 @@
 import { ScrollView } from "std-widgets.slint";
+import { Palette } from "theme.slint";
+import { BlockItem, BlockKind } from "types.slint";
+import { HeadingBlock } from "heading.slint";
+import { ParagraphBlock } from "paragraph.slint";
+import { ListItemBlock } from "list_item.slint";
+import { TaskItemBlock } from "task_item.slint";
+import { CodeBlock } from "code_block.slint";
+import { BlockQuoteBlock } from "block_quote.slint";
+import { TableBlock } from "table_block.slint";
+import { ThematicBreakBlock } from "thematic_break.slint";
 
-// Preview pane: displays rendered Markdown with readable styling.
-// Slint has no HTML renderer, so we render the pre-processed plain-text
-// produced by `markdown::to_plain` — headings, bullets, code blocks, etc.
+// Preview pane: renders the parsed Markdown block model with dedicated
+// components per block kind.
 export component Preview inherits Rectangle {
-    background: #1f2335;
+    background: Palette.surface;
 
-    // Contains pre-processed Markdown text from to_plain()
-    in property <string> html: "";
+    // Parsed Markdown blocks, produced by rustidian-core and bridged in Rust.
+    in property <[BlockItem]> blocks: [];
 
     ScrollView {
         x: 0px;
@@ -15,33 +24,63 @@ export component Preview inherits Rectangle {
         width: parent.width;
         height: parent.height;
 
-        // Single VerticalLayout child — its preferred-height drives the viewport
-        // so ScrollView knows how tall the scrollable area is.
         VerticalLayout {
             padding-left: 24px;
             padding-right: 24px;
             padding-top: 20px;
             padding-bottom: 32px;
-            // Width must be constrained so word-wrap can compute line breaks
-            // and thus report the correct preferred-height to ScrollView.
             width: parent.width;
+            spacing: 8px;
 
-            // Placeholder when content is empty
-            if root.html == "": Text {
+            if root.blocks.length == 0: Text {
                 text: "Nothing to preview yet.\nStart typing in the editor.";
-                color: #45475a;
+                color: Palette.text-muted;
                 font-size: 13px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 wrap: word-wrap;
             }
 
-            // Rendered Markdown text
-            if root.html != "": Text {
-                text: root.html;
-                color: #cdd6f4;
-                font-size: 15px;
-                wrap: word-wrap;
+            for block in root.blocks: VerticalLayout {
+                spacing: 0px;
+
+                if block.kind == BlockKind.heading: HeadingBlock {
+                    markup: block.markup;
+                    level: block.level;
+                }
+
+                if block.kind == BlockKind.paragraph: ParagraphBlock {
+                    markup: block.markup;
+                }
+
+                if block.kind == BlockKind.list-item: ListItemBlock {
+                    markup: block.markup;
+                    marker: block.marker;
+                    indent: block.indent;
+                }
+
+                if block.kind == BlockKind.task-item: TaskItemBlock {
+                    markup: block.markup;
+                    checked: block.checked;
+                    indent: block.indent;
+                }
+
+                if block.kind == BlockKind.code: CodeBlock {
+                    code: block.code;
+                    lang: block.lang;
+                }
+
+                if block.kind == BlockKind.quote: BlockQuoteBlock {
+                    markup: block.markup;
+                    indent: block.indent;
+                }
+
+                if block.kind == BlockKind.table: TableBlock {
+                    cells: block.cells;
+                    columns: block.columns;
+                }
+
+                if block.kind == BlockKind.rule: ThematicBreakBlock { }
             }
         }
     }

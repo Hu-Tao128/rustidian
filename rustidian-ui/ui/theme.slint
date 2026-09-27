@@ -1,0 +1,48 @@
+// Catppuccin theme palette.
+//
+// This is the ONLY place in the UI where literal colours are allowed. Every
+// other component must reference `Palette.<role>`. The default values below
+// are Catppuccin Mocha (dark); Rust overrides them with Catppuccin Latte when
+// the user switches to the light theme.
+//
+// Role            Mocha     Latte     Catppuccin name
+// bg              #1e1e2e   #eff1f5   base
+// surface         #181825   #e6e9ef   mantle
+// card            #313244   #ccd0da   surface0
+// border          #45475a   #bcc0cc   surface1
+// text            #cdd6f4   #4c4f69   text
+// text-muted      #a6adc8   #6c6f85   subtext0
+// accent          #74c7ec   #209fb5   sapphire
+// success         #a6e3a1   #40a02b   green
+// danger          #f38ba8   #d20f39   red
+// warning         #f9e2af   #df8e1d   yellow
+//
+// Reference: https://catppuccin.com/palette
+
+export global Palette {
+    // ── Superficies ──────────────────────────────────────────────────────────
+    /// Fondo principal.
+    in-out property <color> bg: #1e1e2e;
+    /// Sidebar / paneles.
+    in-out property <color> surface: #181825;
+    /// Tarjetas / tabs activos.
+    in-out property <color> card: #313244;
+    /// Bordes / divisores.
+    in-out property <color> border: #45475a;
+
+    // ── Texto ────────────────────────────────────────────────────────────────
+    /// Texto principal.
+    in-out property <color> text: #cdd6f4;
+    /// Texto secundario.
+    in-out property <color> text-muted: #a6adc8;
+
+    // ── Acento y estados ─────────────────────────────────────────────────────
+    /// Acento (botones, tab activo, foco).
+    in-out property <color> accent: #74c7ec;
+    /// Éxito / "Saved".
+    in-out property <color> success: #a6e3a1;
+    /// Peligro / borrar.
+    in-out property <color> danger: #f38ba8;
+    /// Advertencia.
+    in-out property <color> warning: #f9e2af;
+}
