@@ -1,4 +1,5 @@
 import { Palette } from "theme.slint";
+import { Links } from "types.slint";
 
 // Renders a block-quote line with a left rule and nesting indentation.
 export component BlockQuoteBlock inherits Rectangle {
@@ -24,5 +25,12 @@ export component BlockQuoteBlock inherits Rectangle {
         default-color: Palette.text;
         default-font-size: 14px;
         link-color: Palette.accent;
+        link-clicked(link) => {
+            if (link.starts-with("rustidian://")) {
+                Links.activated(link);
+            } else {
+                Platform.open-url(link);
+            }
+        }
     }
 }

@@ -1,4 +1,5 @@
 import { Palette } from "theme.slint";
+import { Links } from "types.slint";
 
 // Renders a single list item (ordered or unordered) with nesting indentation.
 export component ListItemBlock inherits Rectangle {
@@ -29,5 +30,12 @@ export component ListItemBlock inherits Rectangle {
         default-color: Palette.text;
         default-font-size: 14px;
         link-color: Palette.accent;
+        link-clicked(link) => {
+            if (link.starts-with("rustidian://")) {
+                Links.activated(link);
+            } else {
+                Platform.open-url(link);
+            }
+        }
     }
 }

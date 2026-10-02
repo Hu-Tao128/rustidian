@@ -46,6 +46,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // ── Wikilink activation from the preview ──────────────────────────────────
+    //
+    // `StyledText` turns `[[Target]]` into a `rustidian://` link (built by
+    // rustidian-core).  Resolve the target to a note and open it.
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.global::<Links>().on_activated(move |url| {
+            let Some(target) = rustidian_core::markdown::decode_wikilink_target(url.as_str())
+            else {
+                return;
+            };
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            let resolved = {
+                let data = shared2.lock().unwrap();
+                resolve_wikilink(&data.notes, &target)
+            };
+            match resolved {
+                Some(id) => ui.invoke_note_selected(id.into()),
+                None => {
+                    ui.set_status_kind(StatusKind::Error);
+                    ui.set_status_message(format!("Note not found: {target}").into());
+                }
+            }
+        });
+    }
+
     // ── Decide whether to show the vault picker ───────────────────────────────
     //
     // Priority:
@@ -973,6 +1003,26 @@ fn persist_session(ui: &AppWindow, shared: &Arc<Mutex<AppData>>) {
     config.open_tabs = tabs;
     config.active_note = ui.get_current_note_id().to_string();
     let _ = config.save();
+}
+
+/// Resolve a wikilink target to a note id.
+///
+/// Matching is case-insensitive: first by relative path (adding `.md` when
+/// missing), then by note title.
+fn resolve_wikilink(notes: &[rustidian_core::vault::NoteMeta], target: &str) -> Option<String> {
+    let target_lower = target.to_lowercase();
+    let with_ext = if target_lower.ends_with(".md") {
+        target_lower.clone()
+    } else {
+        format!("{target_lower}.md")
+    };
+    if let Some(note) = notes.iter().find(|n| n.id.to_lowercase() == with_ext) {
+        return Some(note.id.clone());
+    }
+    notes
+        .iter()
+        .find(|n| n.title.to_lowercase() == target_lower)
+        .map(|n| n.id.clone())
 }
 
 /// Set the vault path in shared state and update the UI status bar.

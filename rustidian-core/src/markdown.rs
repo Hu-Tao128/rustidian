@@ -136,7 +136,7 @@ pub fn parse_blocks(markdown: &str) -> Vec<Block> {
         }
     }
 
-    match stack.pop() {
+    let mut blocks = match stack.pop() {
         Some(Frame::Root {
             mut blocks,
             mut pending,
@@ -147,7 +147,9 @@ pub fn parse_blocks(markdown: &str) -> Vec<Block> {
             blocks
         }
         _ => Vec::new(),
-    }
+    };
+    rewrite_blocks(&mut blocks);
+    blocks
 }
 
 fn start_tag(stack: &mut Vec<Frame>, tag: Tag<'_>) {
@@ -477,6 +479,156 @@ fn inlines_to_text(inlines: &[Inline]) -> String {
     out
 }
 
+// ── wikilinks ────────────────────────────────────────────────────────────────
+
+/// URL scheme used to turn `[[wikilinks]]` into clickable links in the preview.
+pub const WIKILINK_SCHEME: &str = "rustidian://";
+
+/// Percent-encode a wikilink target so it survives as a Markdown link URL
+/// (spaces and parentheses would otherwise break parsing).
+pub fn encode_wikilink_target(target: &str) -> String {
+    let mut out = String::with_capacity(target.len());
+    for byte in target.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Decode the target encoded in a `rustidian://` URL, or `None` if *url* is not
+/// a wikilink URL.
+pub fn decode_wikilink_target(url: &str) -> Option<String> {
+    let rest = url.strip_prefix(WIKILINK_SCHEME)?;
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Walk the block tree and turn `[[wikilinks]]` found in text into links.
+fn rewrite_blocks(blocks: &mut [Block]) {
+    for block in blocks {
+        match block {
+            Block::Heading(_, inlines) | Block::Paragraph(inlines) => rewrite_inlines(inlines),
+            Block::List { items, .. } => {
+                for item in items {
+                    rewrite_blocks(item);
+                }
+            }
+            Block::TaskList(tasks) => {
+                for (_, inlines) in tasks {
+                    rewrite_inlines(inlines);
+                }
+            }
+            Block::BlockQuote(inner) => rewrite_blocks(inner),
+            Block::CodeBlock { .. } | Block::Table { .. } | Block::ThematicBreak => {}
+        }
+    }
+}
+
+/// Merge adjacent text spans (pulldown-cmark may split `[[` / `Note` / `]]`)
+/// and split wikilinks out of them.
+fn rewrite_inlines(inlines: &mut Vec<Inline>) {
+    for inline in inlines.iter_mut() {
+        match inline {
+            Inline::Strong(v) | Inline::Emphasis(v) | Inline::Strikethrough(v) => {
+                rewrite_inlines(v);
+            }
+            Inline::Link { text, .. } => rewrite_inlines(text),
+            _ => {}
+        }
+    }
+
+    let old = std::mem::take(inlines);
+    let mut merged: Vec<Inline> = Vec::new();
+    let mut buffer = String::new();
+    for inline in old {
+        match inline {
+            Inline::Text(text) => buffer.push_str(&text),
+            other => {
+                if !buffer.is_empty() {
+                    merged.push(Inline::Text(std::mem::take(&mut buffer)));
+                }
+                merged.push(other);
+            }
+        }
+    }
+    if !buffer.is_empty() {
+        merged.push(Inline::Text(buffer));
+    }
+
+    let mut result = Vec::new();
+    for inline in merged {
+        match inline {
+            Inline::Text(text) => split_wikilinks(&text, &mut result),
+            other => result.push(other),
+        }
+    }
+    *inlines = result;
+}
+
+/// Split `[[Target]]` / `[[Target|Alias]]` out of a plain text span.
+fn split_wikilinks(text: &str, out: &mut Vec<Inline>) {
+    let bytes = text.as_bytes();
+    let mut last = 0;
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            if let Some(close) = text[i + 2..].find("]]") {
+                if let Some((target, alias)) = parse_wikilink(&text[i + 2..i + 2 + close]) {
+                    if last < i {
+                        out.push(Inline::Text(text[last..i].to_owned()));
+                    }
+                    out.push(Inline::Link {
+                        text: vec![Inline::Text(alias)],
+                        url: format!("{WIKILINK_SCHEME}{}", encode_wikilink_target(&target)),
+                    });
+                    i = i + 2 + close + 2;
+                    last = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    if last < text.len() {
+        out.push(Inline::Text(text[last..].to_owned()));
+    }
+}
+
+/// Parse the inside of a `[[...]]` into `(target, alias)`.
+fn parse_wikilink(inner: &str) -> Option<(String, String)> {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return None;
+    }
+    let (target, alias) = match inner.split_once('|') {
+        Some((target, alias)) => (target.trim(), alias.trim()),
+        None => (inner, inner),
+    };
+    if target.is_empty() {
+        return None;
+    }
+    Some((target.to_owned(), alias.to_owned()))
+}
+
 // ── serialisation for the Slint `StyledText` element ─────────────────────────
 
 /// Escape characters that would otherwise be interpreted as Markdown markup.
@@ -719,5 +871,53 @@ mod tests {
         let blocks = parse_blocks("a*b_c");
         let markup = inlines_to_markdown(first_paragraph(&blocks));
         assert_eq!(markup, "a\\*b\\_c");
+    }
+
+    #[test]
+    fn wikilink_becomes_clickable_link() {
+        let blocks = parse_blocks("see [[Otra Nota|alias]] and [[Simple]]");
+        let inlines = first_paragraph(&blocks);
+        match &inlines[1] {
+            Inline::Link { text, url } => {
+                assert_eq!(text, &vec![Inline::Text("alias".into())]);
+                assert_eq!(url, "rustidian://Otra%20Nota");
+            }
+            other => panic!("expected link, got {other:?}"),
+        }
+        match &inlines[3] {
+            Inline::Link { text, url } => {
+                assert_eq!(text, &vec![Inline::Text("Simple".into())]);
+                assert_eq!(url, "rustidian://Simple");
+            }
+            other => panic!("expected link, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wikilink_url_roundtrips() {
+        let url = format!(
+            "{WIKILINK_SCHEME}{}",
+            encode_wikilink_target("Proyectos/Mi Nota")
+        );
+        assert_eq!(url, "rustidian://Proyectos/Mi%20Nota");
+        assert_eq!(
+            decode_wikilink_target(&url).as_deref(),
+            Some("Proyectos/Mi Nota")
+        );
+        assert_eq!(decode_wikilink_target("https://x.dev"), None);
+    }
+
+    #[test]
+    fn wikilink_in_code_is_not_a_link() {
+        let blocks = parse_blocks("use `[[Nota]]` here");
+        let inlines = first_paragraph(&blocks);
+        assert!(!inlines.iter().any(|i| matches!(i, Inline::Link { .. })));
+    }
+
+    #[test]
+    fn inlines_to_markdown_emits_wikilink_url() {
+        let blocks = parse_blocks("[[Simple]]");
+        let markup = inlines_to_markdown(first_paragraph(&blocks));
+        assert_eq!(markup, "[Simple](rustidian://Simple)");
     }
 }

@@ -1,5 +1,6 @@
 import { CheckBox } from "std-widgets.slint";
 import { Palette } from "theme.slint";
+import { Links } from "types.slint";
 
 // Renders a task-list item with a real checkbox.
 export component TaskItemBlock inherits Rectangle {
@@ -26,5 +27,12 @@ export component TaskItemBlock inherits Rectangle {
         default-color: root.checked ? Palette.text-muted : Palette.text;
         default-font-size: 14px;
         link-color: Palette.accent;
+        link-clicked(link) => {
+            if (link.starts-with("rustidian://")) {
+                Links.activated(link);
+            } else {
+                Platform.open-url(link);
+            }
+        }
     }
 }

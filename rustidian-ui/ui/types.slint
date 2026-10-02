@@ -44,6 +44,15 @@ export struct TreeRow {
     is-selected-folder: bool,
 }
 
+// ── Link activation ──────────────────────────────────────────────────────────
+
+// Emitted when the user clicks a link in the preview.  Wikilinks carry the
+// `rustidian://` scheme and are resolved by Rust; other URLs are opened with
+// `Platform.open-url` directly in Slint.
+export global Links {
+    callback activated(string);
+}
+
 // ── Drag & drop ──────────────────────────────────────────────────────────────
 
 // Dragging a note carries its id as a `data-transfer` (plain text).  Data
