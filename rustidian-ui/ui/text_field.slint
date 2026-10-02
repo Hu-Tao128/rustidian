@@ -1,0 +1,65 @@
+import { Palette } from "theme.slint";
+
+// Palette-driven text field.
+//
+// std-widgets `LineEdit` paints itself with the *system* style palette, which
+// ignores Rustidian's own light/dark theme.  When the OS theme didn't match the
+// app theme its text and border blended into the background.  This wrapper uses
+// `Palette` exclusively, so it stays readable in both themes.
+export component TextField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder: "";
+    in property <length> font-size: 13px;
+    out property <bool> has-focus: input.has-focus;
+
+    callback edited(string);
+    callback accepted(string);
+    callback cancelled();
+
+    height: 30px;
+    border-radius: 4px;
+    background: Palette.card;
+    border-width: 1px;
+    border-color: input.has-focus ? Palette.accent : Palette.border;
+
+    public function grab-focus() { input.focus(); }
+    public function select-all() { input.select-all(); }
+
+    // Clicking the padding should focus the input too.
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { input.focus(); }
+    }
+
+    if root.text == "": Text {
+        text: root.placeholder;
+        color: Palette.text-muted;
+        x: 9px;
+        width: parent.width - 18px;
+        height: parent.height;
+        vertical-alignment: center;
+        font-size: root.font-size;
+    }
+
+    input := TextInput {
+        x: 9px;
+        width: parent.width - 18px;
+        height: parent.height;
+        vertical-alignment: center;
+        color: Palette.text;
+        font-size: root.font-size;
+        single-line: true;
+        wrap: no-wrap;
+        text <=> root.text;
+        edited => { root.edited(root.text); }
+        accepted => { root.accepted(root.text); }
+        key-pressed(event) => {
+            if (event.text == "\u{1b}") {
+                root.cancelled();
+                return accept;
+            }
+            reject
+        }
+    }
+}

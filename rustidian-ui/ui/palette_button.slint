@@ -1,0 +1,42 @@
+import { Palette } from "theme.slint";
+
+// Palette-driven button.
+//
+// Like `TextField`, this replaces the std-widgets `Button`, whose look follows
+// the OS theme and can clash with (or disappear against) Rustidian's own
+// light/dark palette.
+export component PaletteButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 28px;
+    border-radius: 4px;
+    opacity: root.enabled ? 1.0 : 0.45;
+    background: root.primary
+        ? Palette.accent
+        : (touch.has-hover || touch.pressed ? Palette.card : Palette.bg);
+    border-width: root.primary ? 0px : 1px;
+    border-color: Palette.border;
+
+    Text {
+        text: root.text;
+        color: root.primary ? Palette.on-accent : Palette.text;
+        font-size: 12px;
+        font-weight: root.primary ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+        overflow: elide;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

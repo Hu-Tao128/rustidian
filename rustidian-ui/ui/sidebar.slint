@@ -1,6 +1,9 @@
-import { VerticalBox, HorizontalBox, Button, LineEdit, ListView } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, ListView } from "std-widgets.slint";
 import { NoteItem, BacklinkItem, TreeRow, TreeRowKind, Dnd } from "types.slint";
 import { Palette } from "theme.slint";
+import { IconButton } from "icon_button.slint";
+import { TextField } from "text_field.slint";
+import { PaletteButton } from "palette_button.slint";
 
 export component Sidebar inherits Rectangle {
     background: Palette.surface;
@@ -13,10 +16,17 @@ export component Sidebar inherits Rectangle {
     in-out property <bool> graph-available: false;
     in property <int> note-count: 0;
 
+    // Collapsed icon rail, tree sort direction and "all folders collapsed".
+    in-out property <bool> collapsed: false;
+    in property <bool> sort-descending: false;
+    in property <bool> all-folders-collapsed: false;
+
     callback note-selected(string);
     callback folder-toggled(string);
     callback new-note-requested();
     callback new-folder-requested();
+    callback new-note-in-folder(string);
+    callback new-folder-in-folder(string);
     callback delete-requested(string);
     callback search-changed(string);
     callback vault-change-requested();
@@ -24,9 +34,15 @@ export component Sidebar inherits Rectangle {
     callback note-moved(string, string);              // (id, target-folder)
     callback rename-folder-requested(string, string); // (folder path, new-name)
     callback delete-folder-requested(string);         // (folder path)
+    callback toggle-sort-requested();
+    callback toggle-collapse-folders-requested();
+    callback toggle-sidebar-requested();
 
-    // Which list to show: tree or search results
-    property <bool> searching: search-box.text != "";
+    // Which list to show: tree or search results.  Kept in a root property so
+    // it does not depend on the search box, which lives inside the collapsed
+    // conditional block.
+    in-out property <string> search-text: "";
+    property <bool> searching: root.search-text != "";
 
     // Which note row is showing the delete confirmation
     property <string> pending-delete-id: "";
@@ -34,11 +50,29 @@ export component Sidebar inherits Rectangle {
     // Which note row is in inline-rename mode (right-click activates this)
     property <string> renaming-id: "";
 
-    // Folder row state (right-click = rename, ✕ = delete confirmation)
+    // Folder row state (right-click opens the context menu; inline rename/delete
+    // rows are chosen from it).
     property <string> renaming-folder-id: "";
     property <string> pending-delete-folder-id: "";
 
-    VerticalBox {
+    // Commit naming edits.  Pressing Enter and clicking outside the field
+    // (focus lost) both save the current text, so the user never has to hunt
+    // for a confirmation button.
+    function commit-note-rename(id: string, old-name: string, new-name: string) {
+        if (new-name != "" && new-name != old-name) {
+            root.rename-requested(id, new-name);
+        }
+        root.renaming-id = "";
+    }
+
+    function commit-folder-rename(id: string, old-name: string, new-name: string) {
+        if (new-name != "" && new-name != old-name) {
+            root.rename-folder-requested(id, new-name);
+        }
+        root.renaming-folder-id = "";
+    }
+
+    if !root.collapsed: VerticalBox {
         padding: 8px;
         spacing: 6px;
         vertical-stretch: 1;
@@ -54,6 +88,8 @@ export component Sidebar inherits Rectangle {
                 font-size: 15px;
                 font-weight: 700;
                 vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
             }
 
             if !root.searching: Text {
@@ -62,6 +98,7 @@ export component Sidebar inherits Rectangle {
                 font-size: 11px;
                 vertical-alignment: center;
                 horizontal-alignment: right;
+                overflow: elide;
             }
 
             if root.searching: Text {
@@ -70,48 +107,76 @@ export component Sidebar inherits Rectangle {
                 font-size: 11px;
                 vertical-alignment: center;
                 horizontal-alignment: right;
+                overflow: elide;
             }
         }
 
         Rectangle { height: 1px; background: Palette.border; }
 
         // ── Search box ────────────────────────────────────────────────────────
-        search-box := LineEdit {
-            placeholder-text: "Search notes…";
-            edited(q) => { root.search-changed(q); }
+        TextField {
+            height: 32px;
+            text <=> root.search-text;
+            placeholder: "Search notes…";
+            accepted(t) => { root.search-changed(t); }
+            edited(t) => { root.search-changed(t); }
         }
 
-        // ── New note / new folder buttons ─────────────────────────────────────
-        Button {
-            text: "+ New note    Ctrl+N";
-            clicked => { root.new-note-requested(); }
-        }
+        // ── Toolbar: new note / new folder / sort / collapse-all ──────────────
+        // Compact icon buttons matching Obsidian's file-explorer header.
+        HorizontalBox {
+            height: 26px;
+            spacing: 2px;
+            alignment: center;
 
-        Button {
-            text: "+ New folder";
-            clicked => { root.new-folder-requested(); }
+            IconButton {
+                icon: @image-url("icons/new-note.svg");
+                tip: "New note (Ctrl+N)";
+                width: 28px;
+                clicked => { root.new-note-requested(); }
+            }
+
+            IconButton {
+                icon: @image-url("icons/new-folder.svg");
+                tip: "New folder";
+                width: 28px;
+                clicked => { root.new-folder-requested(); }
+            }
+
+            IconButton {
+                icon: root.sort-descending
+                    ? @image-url("icons/sort-desc.svg")
+                    : @image-url("icons/sort-asc.svg");
+                tip: root.sort-descending ? "Sort: Z–A" : "Sort: A–Z";
+                width: 28px;
+                clicked => { root.toggle-sort-requested(); }
+            }
+
+            IconButton {
+                icon: root.all-folders-collapsed
+                    ? @image-url("icons/expand-all.svg")
+                    : @image-url("icons/collapse-all.svg");
+                tip: root.all-folders-collapsed
+                    ? "Expand all folders"
+                    : "Collapse all folders";
+                width: 28px;
+                clicked => { root.toggle-collapse-folders-requested(); }
+            }
         }
 
         // ── Section label ─────────────────────────────────────────────────────
         HorizontalBox {
-            height: 20px;
-            alignment: space-between;
+            height: 24px;
+            padding-left: 2px;
+            alignment: start;
 
             Text {
                 text: root.searching ? "SEARCH RESULTS" : "NOTES";
                 color: Palette.text-muted;
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 700;
-                letter-spacing: 0.8px;
+                letter-spacing: 1px;
                 vertical-alignment: center;
-            }
-
-            if !root.searching && root.note-count > 0: Text {
-                text: "drag to move";
-                color: Palette.text-muted;
-                font-size: 9px;
-                vertical-alignment: center;
-                horizontal-alignment: right;
             }
         }
 
@@ -206,47 +271,26 @@ export component Sidebar inherits Rectangle {
                             return DragAction.move;
                         }
 
-                        // Inline rename (right-click activates this)
-                        if row.id == root.renaming-folder-id: HorizontalBox {
-                            padding-left: 8px + row.depth * 14px;
-                            padding-right: 4px;
-                            spacing: 4px;
-                            width: parent.width;
-                            height: parent.height;
-
-                            folder-rename-edit := LineEdit {
-                                text: row.name;
-                                font-size: 13px;
-                                horizontal-stretch: 1;
-                                height: 28px;
-                                accepted(new-name) => {
-                                    if new-name != "" && new-name != row.name {
-                                        root.rename-folder-requested(row.id, new-name);
-                                    }
-                                    root.renaming-folder-id = "";
-                                }
+                        // Inline rename — Enter or clicking outside saves,
+                        // Escape cancels.  No extra "×" that looks like delete.
+                        if row.id == root.renaming-folder-id: TextField {
+                            x: 8px + row.depth * 14px;
+                            width: parent.width - (8px + row.depth * 14px) - 4px;
+                            height: 28px;
+                            y: (parent.height - self.height) / 2;
+                            font-size: 13px;
+                            text: row.name;
+                            init => {
+                                self.grab-focus();
+                                self.select-all();
                             }
-
-                            cancel-folder-rename := TouchArea {
-                                width: 22px;
-                                height: 22px;
-                                mouse-cursor: pointer;
-                                clicked => { root.renaming-folder-id = ""; }
-
-                                Rectangle {
-                                    background: cancel-folder-rename.has-hover ? Palette.card : transparent;
-                                    border-radius: 3px;
-                                    width: parent.width;
-                                    height: parent.height;
-                                    Text {
-                                        text: "✕";
-                                        color: Palette.text-muted;
-                                        font-size: 11px;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        width: parent.width;
-                                        height: parent.height;
-                                    }
+                            accepted(new-name) => {
+                                root.commit-folder-rename(row.id, row.name, new-name);
+                            }
+                            cancelled => { root.renaming-folder-id = ""; }
+                            changed has-focus => {
+                                if (!self.has-focus && root.renaming-folder-id == row.id) {
+                                    root.commit-folder-rename(row.id, row.name, self.text);
                                 }
                             }
                         }
@@ -268,23 +312,26 @@ export component Sidebar inherits Rectangle {
 
                             HorizontalBox {
                                 spacing: 4px;
-                                Button {
+                                PaletteButton {
                                     text: "Delete";
-                                    height: 22px;
+                                    primary: true;
+                                    height: 24px;
+                                    horizontal-stretch: 1;
                                     clicked => {
                                         root.delete-folder-requested(row.id);
                                         root.pending-delete-folder-id = "";
                                     }
                                 }
-                                Button {
+                                PaletteButton {
                                     text: "Cancel";
-                                    height: 22px;
+                                    height: 24px;
+                                    horizontal-stretch: 1;
                                     clicked => { root.pending-delete-folder-id = ""; }
                                 }
                             }
                         }
 
-                        // Normal row: click toggles, right-click renames, ✕ deletes
+                        // Normal row: click toggles; right-click opens the menu
                         if row.id != root.renaming-folder-id && row.id != root.pending-delete-folder-id: Rectangle {
                             width: parent.width;
                             height: parent.height;
@@ -295,68 +342,32 @@ export component Sidebar inherits Rectangle {
                                 height: parent.height;
                                 mouse-cursor: pointer;
                                 clicked => { root.folder-toggled(row.id); }
-                                pointer-event(ev) => {
-                                    if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
-                                        root.renaming-folder-id = row.id;
-                                        root.pending-delete-folder-id = "";
-                                    }
-                                }
                             }
 
                             HorizontalBox {
+                                width: parent.width;
+                                height: parent.height;
                                 padding-left: 8px + row.depth * 14px;
-                                padding-right: 4px;
-                                alignment: space-between;
+                                padding-right: 6px;
+                                spacing: 4px;
+                                alignment: start;
 
-                                HorizontalBox {
-                                    alignment: start;
-                                    spacing: 4px;
-                                    horizontal-stretch: 1;
-
-                                    Text {
-                                        text: row.expanded ? "▾" : "▸";
-                                        color: Palette.text-muted;
-                                        font-size: 11px;
-                                        vertical-alignment: center;
-                                        width: 12px;
-                                    }
-
-                                    Text {
-                                        text: "📁 " + row.name;
-                                        color: Palette.text;
-                                        font-size: 13px;
-                                        font-weight: row.is-selected-folder ? 600 : 500;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                        horizontal-stretch: 1;
-                                    }
+                                Text {
+                                    text: row.expanded ? "▾" : "▸";
+                                    color: Palette.text-muted;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    width: 12px;
                                 }
 
-                                folder-del-touch := TouchArea {
-                                    width: 26px;
-                                    height: 26px;
-                                    mouse-cursor: pointer;
-                                    clicked => {
-                                        root.pending-delete-folder-id = row.id;
-                                        root.renaming-folder-id = "";
-                                    }
-
-                                    Rectangle {
-                                        background: folder-del-touch.has-hover ? Palette.card : transparent;
-                                        border-radius: 4px;
-                                        width: parent.width;
-                                        height: parent.height;
-
-                                        Text {
-                                            text: "✕";
-                                            color: folder-del-touch.has-hover ? Palette.danger : Palette.text-muted;
-                                            font-size: 12px;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                            width: parent.width;
-                                            height: parent.height;
-                                        }
-                                    }
+                                Text {
+                                    text: row.name;
+                                    color: row.is-selected-folder ? Palette.accent : Palette.text;
+                                    font-size: 13px;
+                                    font-weight: row.is-selected-folder ? 600 : 500;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
                                 }
                             }
                         }
@@ -380,63 +391,45 @@ export component Sidebar inherits Rectangle {
 
                     HorizontalBox {
                         spacing: 4px;
-                        Button {
+                        PaletteButton {
                             text: "Delete";
-                            height: 22px;
+                            primary: true;
+                            height: 24px;
+                            horizontal-stretch: 1;
                             clicked => {
                                 root.delete-requested(row.id);
                                 root.pending-delete-id = "";
                             }
                         }
-                        Button {
+                        PaletteButton {
                             text: "Cancel";
-                            height: 22px;
+                            height: 24px;
+                            horizontal-stretch: 1;
                             clicked => { root.pending-delete-id = ""; }
                         }
                     }
                 }
 
                 // ── Note: inline-rename row ───────────────────────────────────
-                if row.kind == TreeRowKind.note && row.id == root.renaming-id && row.id != root.pending-delete-id: HorizontalBox {
-                    padding-left: 8px + row.depth * 14px;
-                    padding-right: 4px;
-                    spacing: 4px;
-                    width: parent.width;
-                    height: parent.height;
-
-                    rename-edit := LineEdit {
-                        text: row.name;
-                        font-size: 13px;
-                        horizontal-stretch: 1;
-                        height: 28px;
-                        accepted(new-name) => {
-                            if new-name != "" && new-name != row.name {
-                                root.rename-requested(row.id, new-name);
-                            }
-                            root.renaming-id = "";
-                        }
+                // Enter or clicking outside saves; Escape cancels.
+                if row.kind == TreeRowKind.note && row.id == root.renaming-id && row.id != root.pending-delete-id: TextField {
+                    x: 8px + row.depth * 14px;
+                    width: parent.width - (8px + row.depth * 14px) - 4px;
+                    height: 28px;
+                    y: (parent.height - self.height) / 2;
+                    font-size: 13px;
+                    text: row.name;
+                    init => {
+                        self.grab-focus();
+                        self.select-all();
                     }
-
-                    cancel-rename := TouchArea {
-                        width: 22px;
-                        height: 22px;
-                        mouse-cursor: pointer;
-                        clicked => { root.renaming-id = ""; }
-
-                        Rectangle {
-                            background: cancel-rename.has-hover ? Palette.card : transparent;
-                            border-radius: 3px;
-                            width: parent.width;
-                            height: parent.height;
-                            Text {
-                                text: "✕";
-                                color: Palette.text-muted;
-                                font-size: 11px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                width: parent.width;
-                                height: parent.height;
-                            }
+                    accepted(new-name) => {
+                        root.commit-note-rename(row.id, row.name, new-name);
+                    }
+                    cancelled => { root.renaming-id = ""; }
+                    changed has-focus => {
+                        if (!self.has-focus && root.renaming-id == row.id) {
+                            root.commit-note-rename(row.id, row.name, self.text);
                         }
                     }
                 }
@@ -462,18 +455,12 @@ export component Sidebar inherits Rectangle {
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => { root.note-selected(row.id); }
-                            pointer-event(ev) => {
-                                if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
-                                    root.renaming-id = row.id;
-                                    root.pending-delete-id = "";
-                                }
-                            }
                         }
 
                         HorizontalBox {
                             padding-left: 8px + row.depth * 14px;
-                            padding-right: 4px;
-                            alignment: space-between;
+                            padding-right: 6px;
+                            alignment: start;
 
                             Text {
                                 text: row.name;
@@ -483,31 +470,49 @@ export component Sidebar inherits Rectangle {
                                 overflow: elide;
                                 horizontal-stretch: 1;
                             }
+                        }
+                    }
+                }
 
-                            del-touch := TouchArea {
-                                width: 26px;
-                                height: 26px;
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.pending-delete-id = row.id;
-                                    root.renaming-id = "";
+                // ── Right-click context menu ─────────────────────────────────
+                // Declared last so it sits on top: it ignores left clicks (which
+                // fall through to the row) and opens the menu on right click.
+                ContextMenuArea {
+                    Menu {
+                        MenuItem {
+                            title: "Rename";
+                            activated => {
+                                root.pending-delete-id = "";
+                                root.pending-delete-folder-id = "";
+                                if row.kind == TreeRowKind.folder {
+                                    root.renaming-folder-id = row.id;
+                                } else {
+                                    root.renaming-id = row.id;
                                 }
+                            }
+                        }
 
-                                Rectangle {
-                                    background: del-touch.has-hover ? Palette.card : transparent;
-                                    border-radius: 4px;
-                                    width: parent.width;
-                                    height: parent.height;
+                        if row.kind == TreeRowKind.folder: MenuItem {
+                            title: "New note";
+                            activated => { root.new-note-in-folder(row.id); }
+                        }
 
-                                    Text {
-                                        text: "✕";
-                                        color: del-touch.has-hover ? Palette.danger : Palette.text-muted;
-                                        font-size: 12px;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        width: parent.width;
-                                        height: parent.height;
-                                    }
+                        if row.kind == TreeRowKind.folder: MenuItem {
+                            title: "New folder";
+                            activated => { root.new-folder-in-folder(row.id); }
+                        }
+
+                        MenuSeparator { }
+
+                        MenuItem {
+                            title: "Delete";
+                            activated => {
+                                root.renaming-id = "";
+                                root.renaming-folder-id = "";
+                                if row.kind == TreeRowKind.folder {
+                                    root.pending-delete-folder-id = row.id;
+                                } else {
+                                    root.pending-delete-id = row.id;
                                 }
                             }
                         }
@@ -605,10 +610,101 @@ export component Sidebar inherits Rectangle {
         }
 
         // Spacer + vault button
-        Rectangle { vertical-stretch: 1; }
         Rectangle { height: 1px; background: Palette.border; }
-        Button {
-            text: "⚙  Change vault…";
+
+        Rectangle {
+            height: 30px;
+            border-radius: 4px;
+            background: vault-touch.has-hover ? Palette.card : transparent;
+
+            vault-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.vault-change-requested(); }
+            }
+
+            HorizontalBox {
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 8px;
+                alignment: start;
+
+                Image {
+                    source: @image-url("icons/settings.svg");
+                    width: 16px;
+                    height: 16px;
+                    vertical-alignment: center;
+                    colorize: Palette.text;
+                }
+
+                Text {
+                    text: "Change vault…";
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+
+    // ── Collapsed icon rail ──────────────────────────────────────────────────
+    if root.collapsed: VerticalBox {
+        padding: 6px;
+        spacing: 6px;
+        alignment: start;
+
+        IconButton {
+            icon: @image-url("icons/panel-left.svg");
+            tip: "Expand sidebar";
+            height: 28px;
+            clicked => { root.toggle-sidebar-requested(); }
+        }
+
+        Rectangle { height: 1px; background: Palette.border; }
+
+        IconButton {
+            icon: @image-url("icons/new-note.svg");
+            tip: "New note (Ctrl+N)";
+            height: 28px;
+            clicked => { root.new-note-requested(); }
+        }
+
+        IconButton {
+            icon: @image-url("icons/new-folder.svg");
+            tip: "New folder";
+            height: 28px;
+            clicked => { root.new-folder-requested(); }
+        }
+
+        IconButton {
+            icon: root.sort-descending
+                ? @image-url("icons/sort-desc.svg")
+                : @image-url("icons/sort-asc.svg");
+            tip: root.sort-descending ? "Sort: Z–A" : "Sort: A–Z";
+            height: 28px;
+            clicked => { root.toggle-sort-requested(); }
+        }
+
+        IconButton {
+            icon: root.all-folders-collapsed
+                ? @image-url("icons/expand-all.svg")
+                : @image-url("icons/collapse-all.svg");
+            tip: root.all-folders-collapsed
+                ? "Expand all folders"
+                : "Collapse all folders";
+            height: 28px;
+            clicked => { root.toggle-collapse-folders-requested(); }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+
+        IconButton {
+            icon: @image-url("icons/settings.svg");
+            tip: "Change vault…";
+            height: 28px;
             clicked => { root.vault-change-requested(); }
         }
     }

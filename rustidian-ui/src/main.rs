@@ -229,7 +229,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_folder_toggled(move |path| {
             let path_str = path.to_string();
             if let Ok(mut data) = shared2.lock() {
-                let entry = data.expanded.entry(path_str.clone()).or_insert(true);
+                let entry = data.expanded.entry(path_str.clone()).or_insert(false);
                 *entry = !*entry;
                 data.selected_folder = path_str;
             }
@@ -349,7 +349,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // ── new-note-requested ────────────────────────────────────────────────────
+    // ── new-note-requested (opens the create dialog) ──────────────────────────
     {
         let ui_weak = ui.as_weak();
         let shared2 = Arc::clone(&shared);
@@ -361,13 +361,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if vault.as_os_str().is_empty() {
                 return; // No vault open yet
             }
-            let title = next_untitled_name(&vault, &folder);
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            open_create_dialog(&ui, &vault, &folder, CreateKind::Note);
+        });
+    }
+
+    // ── new-note-in-folder (row context menu) ─────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_new_note_in_folder(move |folder| {
+            let folder_str = folder.to_string();
+            let vault = {
+                let data = shared2.lock().unwrap();
+                data.vault_path.clone()
+            };
+            if vault.as_os_str().is_empty() {
+                return;
+            }
+            if let Ok(mut data) = shared2.lock() {
+                data.selected_folder = folder_str.clone();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                open_create_dialog(&ui, &vault, &folder_str, CreateKind::Note);
+                if let Ok(data) = shared2.lock() {
+                    refresh_sidebar(&ui, &data);
+                }
+            }
+        });
+    }
+
+    // ── create-note-confirmed (name submitted from the dialog) ────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_create_note_confirmed(move |name| {
+            let title = name.trim().to_owned();
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            if title.is_empty() {
+                ui.set_create_error("Please enter a name.".into());
+                return;
+            }
+            if title.contains('/') || title.contains('\\') || title == "." || title == ".." {
+                ui.set_create_error("Names cannot contain / or \\.".into());
+                return;
+            }
+            let (vault, folder) = {
+                let data = shared2.lock().unwrap();
+                (data.vault_path.clone(), data.selected_folder.clone())
+            };
+            if vault.as_os_str().is_empty() {
+                return;
+            }
             match vault::create_note_in(&vault, &folder, &title) {
                 Ok(new_id) => {
-                    let ui = match ui_weak.upgrade() {
-                        Some(u) => u,
-                        None => return,
-                    };
+                    ui.set_show_create_dialog(false);
+                    ui.set_create_error("".into());
                     ui.set_current_note_id(new_id.clone().into());
                     ui.set_current_note_title(title.clone().into());
                     ui.set_current_note_content("".into());
@@ -382,10 +437,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
                 }
                 Err(e) => {
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_status_kind(StatusKind::Error);
-                        ui.set_status_message(format!("Error creating note: {e}").into());
-                    }
+                    ui.set_status_kind(StatusKind::Error);
+                    ui.set_status_message(format!("Error creating note: {e}").into());
+                    ui.set_create_error(format!("{e}").into());
                 }
             }
         });
@@ -524,7 +578,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // ── new-folder-requested ──────────────────────────────────────────────────
+    // ── new-folder-requested (opens the create dialog) ────────────────────────
     {
         let ui_weak = ui.as_weak();
         let shared2 = Arc::clone(&shared);
@@ -536,23 +590,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if vault.as_os_str().is_empty() {
                 return;
             }
-            let name = next_folder_name(&vault, &parent);
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            open_create_dialog(&ui, &vault, &parent, CreateKind::Folder);
+        });
+    }
+
+    // ── new-folder-in-folder (row context menu) ───────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_new_folder_in_folder(move |folder| {
+            let folder_str = folder.to_string();
+            let vault = {
+                let data = shared2.lock().unwrap();
+                data.vault_path.clone()
+            };
+            if vault.as_os_str().is_empty() {
+                return;
+            }
+            if let Ok(mut data) = shared2.lock() {
+                data.selected_folder = folder_str.clone();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                open_create_dialog(&ui, &vault, &folder_str, CreateKind::Folder);
+                if let Ok(data) = shared2.lock() {
+                    refresh_sidebar(&ui, &data);
+                }
+            }
+        });
+    }
+
+    // ── create-folder-confirmed (name submitted from the dialog) ──────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_create_folder_confirmed(move |name| {
+            let name = name.trim().to_owned();
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            if name.is_empty() {
+                ui.set_create_error("Please enter a name.".into());
+                return;
+            }
+            let (vault, parent) = {
+                let data = shared2.lock().unwrap();
+                (data.vault_path.clone(), data.selected_folder.clone())
+            };
+            if vault.as_os_str().is_empty() {
+                return;
+            }
             match vault::create_folder(&vault, &parent, &name) {
                 Ok(path) => {
-                    let ui = match ui_weak.upgrade() {
-                        Some(u) => u,
-                        None => return,
-                    };
+                    ui.set_show_create_dialog(false);
+                    ui.set_create_error("".into());
                     ui.set_status_kind(StatusKind::Success);
                     ui.set_status_message(format!("Created folder: {path}").into());
                     let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
                     worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
                 }
                 Err(e) => {
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_status_kind(StatusKind::Error);
-                        ui.set_status_message(format!("Error creating folder: {e}").into());
-                    }
+                    ui.set_status_kind(StatusKind::Error);
+                    ui.set_status_message(format!("Error creating folder: {e}").into());
+                    ui.set_create_error(format!("{e}").into());
                 }
             }
         });
@@ -629,6 +733,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_status_message(format!("Delete folder error: {e}").into());
                     }
                 }
+            }
+        });
+    }
+
+    // ── toggle-sort-requested ─────────────────────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_toggle_sort_requested(move || {
+            if let Ok(mut data) = shared2.lock() {
+                data.sort_descending = !data.sort_descending;
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                if let Ok(data) = shared2.lock() {
+                    refresh_sidebar(&ui, &data);
+                }
+            }
+        });
+    }
+
+    // ── toggle-collapse-folders-requested (expand/collapse all) ───────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_toggle_collapse_folders_requested(move || {
+            if let Ok(mut data) = shared2.lock() {
+                let collapse = !all_folders_collapsed(&data);
+                let mut paths = Vec::new();
+                collect_folder_paths(&data.tree, &mut paths);
+                for path in paths {
+                    data.expanded.insert(path, !collapse);
+                }
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                if let Ok(data) = shared2.lock() {
+                    refresh_sidebar(&ui, &data);
+                }
+            }
+        });
+    }
+
+    // ── toggle-sidebar-requested (collapse / expand the sidebar) ──────────────
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_toggle_sidebar_requested(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let collapsed = ui.get_sidebar_collapsed();
+                ui.set_sidebar_collapsed(!collapsed);
             }
         });
     }
@@ -876,6 +1028,7 @@ fn apply_theme(ui: &AppWindow, dark: bool) {
         p.set_text(rgb(0xcdd6f4));
         p.set_text_muted(rgb(0xa6adc8));
         p.set_accent(rgb(0x74c7ec));
+        p.set_on_accent(rgb(0x1e1e2e));
         p.set_success(rgb(0xa6e3a1));
         p.set_danger(rgb(0xf38ba8));
         p.set_warning(rgb(0xf9e2af));
@@ -888,6 +1041,7 @@ fn apply_theme(ui: &AppWindow, dark: bool) {
         p.set_text(rgb(0x4c4f69));
         p.set_text_muted(rgb(0x6c6f85));
         p.set_accent(rgb(0x209fb5));
+        p.set_on_accent(rgb(0x1e1e2e));
         p.set_success(rgb(0x40a02b));
         p.set_danger(rgb(0xd20f39));
         p.set_warning(rgb(0xdf8e1d));
@@ -902,9 +1056,16 @@ fn render_preview(ui: &AppWindow, content: &str) {
 
 /// Rebuild the sidebar tree, note titles and backlinks from shared state.
 fn refresh_sidebar(ui: &AppWindow, data: &AppData) {
-    let rows = tree_to_rows(&data.tree, &data.expanded, &data.selected_folder);
+    let rows = tree_to_rows(
+        &data.tree,
+        &data.expanded,
+        &data.selected_folder,
+        data.sort_descending,
+    );
     ui.set_note_count(data.notes.len() as i32);
     ui.set_tree(ModelRc::new(VecModel::from(rows)));
+    ui.set_sort_descending(data.sort_descending);
+    ui.set_all_folders_collapsed(all_folders_collapsed(data));
 
     let titles: Vec<SharedString> = data.notes.iter().map(|n| n.title.clone().into()).collect();
     ui.set_note_titles(ModelRc::new(VecModel::from(titles)));
@@ -920,6 +1081,29 @@ fn refresh_sidebar(ui: &AppWindow, data: &AppData) {
         let bl_items = to_backlink_items(&bl_ids, &data.notes);
         ui.set_backlinks(ModelRc::new(VecModel::from(bl_items)));
     }
+}
+
+/// Collect every folder path in the tree (depth-first, excluding the root).
+fn collect_folder_paths(nodes: &[vault::FolderNode], out: &mut Vec<String>) {
+    for node in nodes {
+        if !node.path.is_empty() {
+            out.push(node.path.clone());
+        }
+        collect_folder_paths(&node.children, out);
+    }
+}
+
+/// Whether the tree has folders and every one of them is collapsed.
+///
+/// Folders missing from the `expanded` map are collapsed by default, so a
+/// missing entry counts as collapsed here too.
+fn all_folders_collapsed(data: &AppData) -> bool {
+    let mut paths = Vec::new();
+    collect_folder_paths(&data.tree, &mut paths);
+    !paths.is_empty()
+        && paths
+            .iter()
+            .all(|p| !data.expanded.get(p).copied().unwrap_or(false))
 }
 
 /// Build a `Send` refresh callback for background workers.
@@ -1062,6 +1246,26 @@ fn activate_vault(path: PathBuf, shared: Arc<Mutex<AppData>>, ui_weak: slint::We
     open_vault(path.clone(), Arc::clone(&shared), ui_weak.clone());
     let refresh = make_refresh(ui_weak, Arc::clone(&shared));
     worker::rebuild_index(path, shared, refresh);
+}
+
+/// Open the create dialog pre-filled with a non-colliding default name.
+///
+/// `kind` selects whether a note or a folder is being named; the actual
+/// creation happens in the `create-*-confirmed` handlers once the user submits.
+fn open_create_dialog(
+    ui: &AppWindow,
+    vault: &std::path::Path,
+    folder: &str,
+    kind: CreateKind,
+) {
+    let name = match kind {
+        CreateKind::Note => next_untitled_name(vault, folder),
+        CreateKind::Folder => next_folder_name(vault, folder),
+    };
+    ui.set_create_kind(kind);
+    ui.set_create_name(name.into());
+    ui.set_create_error("".into());
+    ui.set_show_create_dialog(true);
 }
 
 /// Return an "Untitled N" name that does not collide inside *folder*.

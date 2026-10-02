@@ -16,6 +16,8 @@ pub struct AppData {
     pub expanded: HashMap<String, bool>,
     /// Folder selected in the sidebar; new notes are created here.
     pub selected_folder: String,
+    /// Whether the sidebar tree is sorted Z→A instead of A→Z.
+    pub sort_descending: bool,
 }
 
 /// Spawn a background thread that scans the vault and rebuilds the note list,

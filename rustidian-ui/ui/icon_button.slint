@@ -1,0 +1,35 @@
+import { Palette } from "theme.slint";
+
+// Compact toolbar button: a tinted SVG icon that highlights on hover.
+//
+// Icons are SVG so their shape does not depend on which glyphs the system font
+// happens to contain; `Image.colorize` tints them with the palette, which keeps
+// them readable in both the light and dark themes.
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip: "";
+    in property <bool> toggled: false;
+    callback clicked();
+
+    height: 24px;
+    border-radius: 4px;
+    background: touch.has-hover || touch.pressed || root.toggled ? Palette.card : transparent;
+
+    Image {
+        source: root.icon;
+        width: 16px;
+        height: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        colorize: root.toggled ? Palette.accent : Palette.text;
+    }
+
+    Tooltip { text: @markdown("\{root.tip}"); }
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

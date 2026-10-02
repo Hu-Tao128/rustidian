@@ -34,6 +34,20 @@ All notable changes to Rustidian are documented here.
   delete with confirmation. `list_notes_tree` now includes empty folders.
   Renaming or deleting a folder remaps/drops the tabs and the active note that
   lived inside it.
+- **Creation dialog**: clicking "+ New note" / "+ New folder" (or `Ctrl+N`) now
+  opens a modal where you type the name; the note/folder is created on submit,
+  with validation errors shown inline instead of failing silently.
+- **Resizable sidebar**: drag the handle on the sidebar's right edge (160–480 px)
+  to fit the window and the amount of content.
+- **Collapsible sidebar**: a panel button collapses the sidebar to a slim icon
+  rail and expands it back.
+- **File-explorer toolbar**: dedicated icon buttons for new note, new folder,
+  sort direction (A–Z / Z–A) and collapse/expand all folders, mirroring
+  Obsidian's file-explorer header. The bottom rail repeats them while the
+  sidebar is collapsed.
+- **Right-click context menu** on sidebar rows: Rename, Delete and, for
+  folders, New note / New folder inside that folder. This replaces the inline
+  "✕" delete buttons on every row.
 - **Session restore**: `Config` gained `open_tabs` and `active_note`; open tabs
   and the active note come back on the next launch (missing files are dropped).
 - **Flush on close**: pending edits are written synchronously when the window is
@@ -47,6 +61,27 @@ All notable changes to Rustidian are documented here.
 - The preview no longer uses `pulldown_cmark::html::push_html()`.
 - The vault picker no longer requires typing a path.
 - `Config` gained a `dark_mode` field (defaults to `true` for existing configs).
+- The sidebar tree now fills the full sidebar height (it used to stop halfway),
+  so folders and notes lower in the list are visible without scrolling.
+- Folder rows no longer depend on an emoji glyph for their name, so the name
+  stays legible with any font.
+- **Folders start collapsed** by default; expand one by clicking its arrow.
+- **Icons are now SVG** (`ui/icons/`) tinted from the palette, so the sidebar
+  buttons and the light/dark theme switch stay clearly visible in both themes
+  instead of relying on font glyph coverage.
+- The sidebar toggle now lives in the main toolbar (always reachable) instead of
+  the sidebar header, where it overflowed.
+- The four file-explorer buttons are centered horizontally and the section label
+  is clearer (the "drag to move" hint was removed).
+- The sidebar search field is now a palette-driven input (`ui/text_field.slint`)
+  instead of the std-widgets `LineEdit`, whose system colours made it disappear
+  on the light theme.
+- Inputs and buttons are all palette-driven now (`ui/text_field.slint`,
+  `ui/palette_button.slint`): the create dialog and the inline rename fields no
+  longer follow the OS theme, so they stay readable in dark and light mode.
+- Renaming saves on Enter **or** when clicking outside the field; Escape
+  cancels. The confusing "×" next to the rename field is gone. The create
+  dialog also closes on Escape or when clicking outside it.
 
 ### Performance
 

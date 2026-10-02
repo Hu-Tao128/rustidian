@@ -28,15 +28,16 @@ pub fn to_backlink_items(ids: &[NoteId], all_notes: &[NoteMeta]) -> Vec<Backlink
 /// Flatten a folder tree into the sidebar's row model.
 ///
 /// `expanded` stores the persisted expansion state per folder path; folders
-/// missing from the map default to expanded.
+/// missing from the map default to collapsed.
 pub fn tree_to_rows(
     tree: &[FolderNode],
     expanded: &HashMap<String, bool>,
     selected_folder: &str,
+    descending: bool,
 ) -> Vec<TreeRow> {
     let mut rows = Vec::new();
     for root in tree {
-        flatten_node(root, 0, expanded, selected_folder, &mut rows);
+        flatten_node(root, 0, expanded, selected_folder, descending, &mut rows);
     }
     rows
 }
@@ -46,9 +47,17 @@ fn flatten_node(
     depth: i32,
     expanded: &HashMap<String, bool>,
     selected_folder: &str,
+    descending: bool,
     rows: &mut Vec<TreeRow>,
 ) {
-    for note in &node.notes {
+    // Re-sort a shallow copy of the references so the direction can change at
+    // runtime without rebuilding the folder tree in the core.
+    let mut notes: Vec<&NoteMeta> = node.notes.iter().collect();
+    notes.sort_by_key(|n| n.title.to_lowercase());
+    if descending {
+        notes.reverse();
+    }
+    for note in notes {
         rows.push(TreeRow {
             kind: TreeRowKind::Note,
             depth,
@@ -61,8 +70,14 @@ fn flatten_node(
         });
     }
 
-    for child in &node.children {
-        let is_expanded = expanded.get(&child.path).copied().unwrap_or(true);
+    let mut children: Vec<&FolderNode> = node.children.iter().collect();
+    children.sort_by_key(|c| c.name.to_lowercase());
+    if descending {
+        children.reverse();
+    }
+
+    for child in children {
+        let is_expanded = expanded.get(&child.path).copied().unwrap_or(false);
         rows.push(TreeRow {
             kind: TreeRowKind::Folder,
             depth,
@@ -74,7 +89,14 @@ fn flatten_node(
             is_selected_folder: child.path == selected_folder,
         });
         if is_expanded {
-            flatten_node(child, depth + 1, expanded, selected_folder, rows);
+            flatten_node(
+                child,
+                depth + 1,
+                expanded,
+                selected_folder,
+                descending,
+                rows,
+            );
         }
     }
 }

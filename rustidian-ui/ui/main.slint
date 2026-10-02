@@ -1,9 +1,12 @@
-import { VerticalBox, HorizontalBox, Button } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { NoteItem, BacklinkItem, TabItem, TreeRow, BlockItem, EditResult, Dnd, Links } from "types.slint";
 import { Palette } from "theme.slint";
 import { Sidebar } from "sidebar.slint";
 import { Editor } from "editor.slint";
 import { Preview } from "preview.slint";
+import { IconButton } from "icon_button.slint";
+import { TextField } from "text_field.slint";
+import { PaletteButton } from "palette_button.slint";
 
 export { NoteItem, BacklinkItem, TabItem, TreeRow, BlockItem, EditResult, Palette, Dnd, Links }
 
@@ -11,6 +14,9 @@ export enum StatusKind { info, success, error }
 
 // View mode — mirrors Obsidian's editor/split/preview modes
 export enum ViewMode { edit, split, preview }
+
+// What the creation dialog is naming.
+export enum CreateKind { note, folder }
 
 export global AppState {
     in-out property <bool> graph-available: false;
@@ -56,6 +62,22 @@ export component AppWindow inherits Window {
     // Open tabs — each tab is an open note
     in-out property <[TabItem]> open-tabs: [];
 
+    // Width of the sidebar, adjustable by dragging the splitter.
+    in-out property <length> sidebar-width: 220px;
+
+    // Sidebar collapsed to a narrow icon rail.
+    in-out property <bool> sidebar-collapsed: false;
+    // Current tree sort direction (drives the toolbar label) and whether every
+    // folder is collapsed (drives the collapse-all icon).
+    in property <bool> sort-descending: false;
+    in property <bool> all-folders-collapsed: false;
+
+    // ── Create dialog (new note / new folder) ────────────────────────────────
+    in-out property <bool> show-create-dialog: false;
+    in-out property <CreateKind> create-kind: CreateKind.note;
+    in-out property <string> create-name: "";
+    in-out property <string> create-error: "";
+
     // When true the app shows the vault-picker screen instead of the main editor.
     in-out property <bool> show-vault-picker: false;
     in-out property <string> vault-picker-error: "";
@@ -66,6 +88,13 @@ export component AppWindow inherits Window {
     callback save-requested();
     callback new-note-requested();
     callback new-folder-requested();
+    // Create inside a specific folder (from the row context menu).
+    callback new-note-in-folder(string);
+    callback new-folder-in-folder(string);
+    // create-note-confirmed(name) / create-folder-confirmed(name) — submitted
+    // from the creation dialog after the user typed a name.
+    callback create-note-confirmed(string);
+    callback create-folder-confirmed(string);
     callback rename-requested(string, string);
     callback rename-folder-requested(string, string);
     callback delete-requested(string);
@@ -76,6 +105,9 @@ export component AppWindow inherits Window {
     callback vault-open-requested(string);
     callback browse-vault-requested();
     callback folder-toggled(string);
+    callback toggle-sort-requested();
+    callback toggle-collapse-folders-requested();
+    callback toggle-sidebar-requested();
     // toggle-preview kept for Ctrl+P backward compat — cycles view mode
     callback toggle-preview();
     callback toggle-theme();
@@ -86,6 +118,16 @@ export component AppWindow inherits Window {
     callback handle-edit-key(string, bool, bool, bool, string, int, int) -> EditResult;
     callback accept-suggestion(string, string, int) -> EditResult;
     callback update-suggestions(string, int);
+
+    // Submit the name typed in the create dialog to Rust.  Validation errors
+    // come back through `create-error`, which keeps the dialog open.
+    function submit-create() {
+        if root.create-kind == CreateKind.note {
+            root.create-note-confirmed(root.create-name);
+        } else {
+            root.create-folder-confirmed(root.create-name);
+        }
+    }
 
     // ── Vault picker screen ──────────────────────────────────────────────────
     if root.show-vault-picker: Rectangle {
@@ -112,9 +154,15 @@ export component AppWindow inherits Window {
                 wrap: word-wrap;
             }
 
-            Button {
-                text: "📂  Choose folder…";
-                clicked => { root.browse-vault-requested(); }
+            HorizontalBox {
+                alignment: center;
+                PaletteButton {
+                    text: "Choose folder…";
+                    primary: true;
+                    width: 200px;
+                    height: 34px;
+                    clicked => { root.browse-vault-requested(); }
+                }
             }
 
             if root.vault-picker-error != "": Text {
@@ -142,9 +190,15 @@ export component AppWindow inherits Window {
 
         // Sidebar
         sidebar := Sidebar {
-            min-width: 160px;
-            preferred-width: 220px;
+            // A collapsed sidebar becomes a fixed icon rail; otherwise it uses
+            // the draggable width, never squeezing the content below ~240px.
+            width: root.sidebar-collapsed
+                ? 54px
+                : min(root.sidebar-width, max(160px, root.width - 240px));
             horizontal-stretch: 0;
+            collapsed: root.sidebar-collapsed;
+            sort-descending: root.sort-descending;
+            all-folders-collapsed: root.all-folders-collapsed;
             tree: root.tree;
             note-count: root.note-count;
             search-results: root.search-results;
@@ -155,6 +209,8 @@ export component AppWindow inherits Window {
             folder-toggled(path) => { root.folder-toggled(path); }
             new-note-requested() => { root.new-note-requested(); }
             new-folder-requested() => { root.new-folder-requested(); }
+            new-note-in-folder(folder) => { root.new-note-in-folder(folder); }
+            new-folder-in-folder(folder) => { root.new-folder-in-folder(folder); }
             delete-requested(id) => { root.delete-requested(id); }
             delete-folder-requested(path) => { root.delete-folder-requested(path); }
             note-moved(id, folder) => { root.note-moved(id, folder); }
@@ -162,6 +218,40 @@ export component AppWindow inherits Window {
             vault-change-requested() => { root.browse-vault-requested(); }
             rename-requested(id, new-title) => { root.rename-requested(id, new-title); }
             rename-folder-requested(path, new-name) => { root.rename-folder-requested(path, new-name); }
+            toggle-sort-requested() => { root.toggle-sort-requested(); }
+            toggle-collapse-folders-requested() => { root.toggle-collapse-folders-requested(); }
+            toggle-sidebar-requested() => { root.toggle-sidebar-requested(); }
+        }
+
+        // Sidebar resize handle — drag left/right to resize the sidebar.
+        if !root.sidebar-collapsed: Rectangle {
+            width: 5px;
+            background: splitter-touch.has-hover || splitter-touch.pressed
+                ? Palette.accent : transparent;
+
+            splitter-touch := TouchArea {
+                property <length> drag-start-x: 0px;
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: col-resize;
+
+                pointer-event(ev) => {
+                    if (ev.button == PointerEventButton.left && ev.kind == PointerEventKind.down) {
+                        self.drag-start-x = self.mouse-x;
+                    }
+                }
+
+                moved => {
+                    if (self.pressed) {
+                        // `mouse-x` is relative to this handle, whose x equals the
+                        // sidebar width, so `sidebar-width + (mouse-x - start)` is
+                        // the absolute position of the pointer.
+                        root.sidebar-width = clamp(
+                            root.sidebar-width + (self.mouse-x - self.drag-start-x),
+                            160px, 480px);
+                    }
+                }
+            }
         }
 
         // Main content column
@@ -276,6 +366,16 @@ export component AppWindow inherits Window {
                         alignment: start;
                         horizontal-stretch: 1;
 
+                        // Sidebar show/hide — kept in the main toolbar so it is
+                        // reachable whether the sidebar is open or collapsed.
+                        IconButton {
+                            icon: @image-url("icons/panel-left.svg");
+                            tip: root.sidebar-collapsed ? "Show sidebar" : "Hide sidebar";
+                            width: 28px;
+                            height: 28px;
+                            clicked => { root.toggle-sidebar-requested(); }
+                        }
+
                         if root.current-note-id != "": Text {
                             text: root.current-note-title != "" ? root.current-note-title : root.current-note-id;
                             color: Palette.text;
@@ -292,27 +392,71 @@ export component AppWindow inherits Window {
                         alignment: end;
                         horizontal-stretch: 0;
 
-                        // Theme toggle (dark / light)
-                        theme-touch := TouchArea {
-                            width: 30px;
+                        // Theme segmented control — both icons stay visible in
+                        // either theme: SVG icons tinted from the palette, with
+                        // the inactive one using the regular (not muted) text
+                        // colour so it never disappears on the light theme.
+                        Rectangle {
+                            width: theme-row.preferred-width + 6px;
                             height: 28px;
-                            mouse-cursor: pointer;
-                            clicked => { root.toggle-theme(); }
+                            background: Palette.bg;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: Palette.border;
 
-                            Rectangle {
-                                background: theme-touch.has-hover ? Palette.card : transparent;
-                                border-radius: 4px;
-                                width: parent.width;
-                                height: parent.height;
+                            theme-row := HorizontalBox {
+                                padding: 3px;
+                                spacing: 2px;
+                                alignment: center;
 
-                                Text {
-                                    text: root.dark-mode ? "☀" : "🌙";
-                                    color: Palette.text-muted;
-                                    font-size: 15px;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                    width: parent.width;
-                                    height: parent.height;
+                                light-touch := TouchArea {
+                                    width: 28px;
+                                    height: 22px;
+                                    mouse-cursor: pointer;
+                                    clicked => { if (root.dark-mode) { root.toggle-theme(); } }
+
+                                    Rectangle {
+                                        background: !root.dark-mode ? Palette.card : (light-touch.has-hover ? Palette.card : transparent);
+                                        border-radius: 3px;
+                                        width: parent.width;
+                                        height: parent.height;
+
+                                        Image {
+                                            source: @image-url("icons/sun.svg");
+                                            width: 15px;
+                                            height: 15px;
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            colorize: !root.dark-mode ? Palette.accent : Palette.text;
+                                        }
+
+                                        Tooltip { text: @markdown("Light theme"); }
+                                    }
+                                }
+
+                                dark-touch := TouchArea {
+                                    width: 28px;
+                                    height: 22px;
+                                    mouse-cursor: pointer;
+                                    clicked => { if (!root.dark-mode) { root.toggle-theme(); } }
+
+                                    Rectangle {
+                                        background: root.dark-mode ? Palette.card : (dark-touch.has-hover ? Palette.card : transparent);
+                                        border-radius: 3px;
+                                        width: parent.width;
+                                        height: parent.height;
+
+                                        Image {
+                                            source: @image-url("icons/moon.svg");
+                                            width: 15px;
+                                            height: 15px;
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            colorize: root.dark-mode ? Palette.accent : Palette.text;
+                                        }
+
+                                        Tooltip { text: @markdown("Dark theme"); }
+                                    }
                                 }
                             }
                         }
@@ -422,10 +566,11 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        Button {
+                        PaletteButton {
                             text: "Save";
+                            primary: true;
+                            width: 72px;
                             height: 28px;
-                            horizontal-stretch: 0;
                             enabled: root.current-note-id != "" && root.unsaved;
                             clicked => { root.save-requested(); }
                         }
@@ -537,10 +682,127 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ── Create dialog (new note / new folder) ────────────────────────────────
+    //
+    // A lightweight modal: press "+ New note" / "+ New folder" (or Ctrl+N) and
+    // type the name.  Rust validates the name and either closes the dialog on
+    // success or reports the error through `create-error`.
+    if root.show-create-dialog: Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+
+        // Clicking the dimmed background closes the dialog.
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            clicked => {
+                root.show-create-dialog = false;
+                root.create-error = "";
+            }
+        }
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: #000000;
+            opacity: 0.35;
+        }
+
+        Rectangle {
+            width: 340px;
+            height: create-dialog-box.preferred-height + 32px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+
+            // Keep clicks inside the card from reaching the closing scrim.
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
+            create-dialog-box := VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+
+                Text {
+                    text: root.create-kind == CreateKind.note ? "New note" : "New folder";
+                    color: Palette.text;
+                    font-size: 15px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    height: 22px;
+                }
+
+                Text {
+                    text: root.create-kind == CreateKind.note
+                        ? "Enter a name for the new note."
+                        : "Enter a name for the new folder.";
+                    color: Palette.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                TextField {
+                    text <=> root.create-name;
+                    placeholder: "Name";
+                    init => {
+                        self.grab-focus();
+                        self.select-all();
+                    }
+                    accepted(t) => { root.submit-create(); }
+                    cancelled => {
+                        root.show-create-dialog = false;
+                        root.create-error = "";
+                    }
+                }
+
+                if root.create-error != "": Text {
+                    text: root.create-error;
+                    color: Palette.danger;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+
+                    PaletteButton {
+                        text: "Cancel";
+                        width: 96px;
+                        height: 30px;
+                        clicked => {
+                            root.show-create-dialog = false;
+                            root.create-error = "";
+                        }
+                    }
+
+                    PaletteButton {
+                        text: root.create-kind == CreateKind.note ? "Create note" : "Create folder";
+                        primary: true;
+                        width: 120px;
+                        height: 30px;
+                        clicked => { root.submit-create(); }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     forward-focus: key-handler;
     key-handler := FocusScope {
         key-pressed(event) => {
+            if (root.show-create-dialog && event.text == "\u{1b}") {
+                root.show-create-dialog = false;
+                root.create-error = "";
+                return accept;
+            }
             if (event.modifiers.control && event.text == "s") {
                 root.save-requested();
                 return accept;
