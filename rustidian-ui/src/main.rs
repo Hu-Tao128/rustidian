@@ -123,14 +123,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_note_selected(move |id| {
             let id_str = id.to_string();
 
-            // Auto-save the current note before switching so no content is lost.
+            // Auto-save the current note before switching so no content is lost,
+            // then refresh its links incrementally (no full vault rescan).
+            let mut saved_previous: Option<String> = None;
             if let Some(ui) = ui_weak.upgrade() {
                 let cur_id = ui.get_current_note_id().to_string();
                 let cur_content = ui.get_current_note_content().to_string();
                 if !cur_id.is_empty() && ui.get_unsaved() {
                     let vault_path = shared2.lock().unwrap().vault_path.clone();
-                    let _ = vault::write_note(&vault_path, &cur_id, &cur_content);
+                    if vault::write_note(&vault_path, &cur_id, &cur_content).is_ok() {
+                        saved_previous = Some(cur_id);
+                    }
                 }
+            }
+            if let Some(previous_id) = saved_previous {
+                let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
+                worker::reindex_note(previous_id, Arc::clone(&shared2), refresh);
             }
 
             // Read everything we need under a single short-lived lock.
@@ -203,51 +211,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // ── content-changed (marks unsaved + updates preview + debounce autosave) ─
+    // ── content-changed (marks unsaved + debounces preview and autosave) ──────
     {
         let ui_weak = ui.as_weak();
-        let timer_rc = Rc::new(Timer::default());
+        let autosave_timer = Rc::new(Timer::default());
+        let preview_timer = Rc::new(Timer::default());
         let shared2 = Arc::clone(&shared);
         ui.on_content_changed(move |text| {
             let ui = match ui_weak.upgrade() {
                 Some(u) => u,
                 None => return,
             };
-            render_preview(&ui, text.as_str());
             ui.set_unsaved(true);
 
             let cur_id = ui.get_current_note_id().to_string();
             mark_tab_unsaved(&ui, &cur_id, true);
 
+            // Debounce the preview: re-parsing and rebuilding the whole
+            // StyledText model on every keystroke is the expensive part on the
+            // old hardware this app targets.
+            let preview_text = text.to_string();
+            let ui_weak_preview = ui_weak.clone();
+            preview_timer.start(
+                TimerMode::SingleShot,
+                std::time::Duration::from_millis(80),
+                move || {
+                    if let Some(ui) = ui_weak_preview.upgrade() {
+                        // Skip if the user has switched notes in the meantime.
+                        if ui.get_current_note_content().as_str() == preview_text {
+                            render_preview(&ui, &preview_text);
+                        }
+                    }
+                },
+            );
+
             let ui_weak2 = ui_weak.clone();
             let shared3 = Arc::clone(&shared2);
-            timer_rc.start(
+            autosave_timer.start(
                 TimerMode::SingleShot,
                 std::time::Duration::from_millis(600),
-                {
-                    let ui_weak3 = ui_weak2.clone();
-                    move || {
-                        let ui = match ui_weak3.upgrade() {
-                            Some(u) => u,
-                            None => return,
-                        };
-                        let id = ui.get_current_note_id().to_string();
-                        let content = ui.get_current_note_content().to_string();
-                        if id.is_empty() {
-                            return;
-                        }
+                move || {
+                    let ui = match ui_weak2.upgrade() {
+                        Some(u) => u,
+                        None => return,
+                    };
+                    let id = ui.get_current_note_id().to_string();
+                    let content = ui.get_current_note_content().to_string();
+                    if id.is_empty() {
+                        return;
+                    }
+                    let vault = {
                         let data = shared3.lock().unwrap();
-                        match vault::write_note(&data.vault_path, &id, &content) {
-                            Ok(()) => {
-                                ui.set_unsaved(false);
-                                mark_tab_unsaved(&ui, &id, false);
-                                ui.set_status_kind(StatusKind::Success);
-                                ui.set_status_message("Saved.".into());
-                            }
-                            Err(e) => {
-                                ui.set_status_kind(StatusKind::Error);
-                                ui.set_status_message(format!("Save error: {e}").into());
-                            }
+                        data.vault_path.clone()
+                    };
+                    match vault::write_note(&vault, &id, &content) {
+                        Ok(()) => {
+                            ui.set_unsaved(false);
+                            mark_tab_unsaved(&ui, &id, false);
+                            ui.set_status_kind(StatusKind::Success);
+                            ui.set_status_message("Saved.".into());
+                            // Refresh the link index for this note only.
+                            let refresh = make_refresh(ui.as_weak(), Arc::clone(&shared3));
+                            worker::reindex_note(id, Arc::clone(&shared3), refresh);
+                        }
+                        Err(e) => {
+                            ui.set_status_kind(StatusKind::Error);
+                            ui.set_status_message(format!("Save error: {e}").into());
                         }
                     }
                 },
@@ -280,7 +309,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_status_kind(StatusKind::Success);
                     ui.set_status_message("Saved.".into());
                     let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
-                    worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
+                    worker::reindex_note(id, Arc::clone(&shared2), refresh);
                 }
                 Err(e) => {
                     ui.set_status_kind(StatusKind::Error);

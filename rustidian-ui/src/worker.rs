@@ -49,6 +49,21 @@ pub fn rebuild_index(
     });
 }
 
+/// Refresh the link index for a single note after it was saved.
+///
+/// Cheaper than [`rebuild_index`] because it only re-reads one file; used on
+/// the hot path (autosave) where the folder tree hasn't changed.
+pub fn reindex_note(id: String, shared: Arc<Mutex<AppData>>, on_done: impl Fn() + Send + 'static) {
+    std::thread::spawn(move || {
+        {
+            let mut data = shared.lock().unwrap();
+            let vault = data.vault_path.clone();
+            rustidian_core::links::update_note(&mut data.link_index, &vault, &id);
+        }
+        slint::invoke_from_event_loop(on_done).ok();
+    });
+}
+
 /// Spawn a background search and invoke *on_done* with the results.
 pub fn run_search(
     query: String,

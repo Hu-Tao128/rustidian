@@ -27,6 +27,24 @@ pub fn normalise(name: &str) -> String {
     name.trim().to_lowercase()
 }
 
+/// Extract the normalised target ids of every `[[wikilink]]` in *content*.
+///
+/// A target without an extension gets `.md` appended, so `[[Note]]` and
+/// `[[Note.md]]` resolve to the same file.
+fn parse_targets(content: &str) -> Vec<NoteId> {
+    wikilink_re()
+        .captures_iter(content)
+        .map(|cap| {
+            let target = cap[1].trim();
+            if target.contains('.') {
+                normalise(target)
+            } else {
+                format!("{}.md", normalise(target))
+            }
+        })
+        .collect()
+}
+
 /// Build a full [`LinkIndex`] by scanning every `.md` file in *vault*.
 ///
 /// The index is built in two passes:
@@ -36,7 +54,6 @@ pub fn normalise(name: &str) -> String {
 /// Broken links (pointing at a non-existing note) are stored but not resolved —
 /// they will simply have no matching note in `list_notes`.
 pub fn build_index(vault: &Path) -> LinkIndex {
-    let re = wikilink_re();
     let mut outgoing: HashMap<NoteId, Vec<NoteId>> = HashMap::new();
 
     for entry in WalkDir::new(vault)
@@ -59,20 +76,7 @@ pub fn build_index(vault: &Path) -> LinkIndex {
             Err(_) => continue,
         };
 
-        let targets: Vec<NoteId> = re
-            .captures_iter(&content)
-            .map(|cap| {
-                let target = cap[1].trim();
-                // If the target has no extension, assume `.md`
-                if target.contains('.') {
-                    normalise(target)
-                } else {
-                    format!("{}.md", normalise(target))
-                }
-            })
-            .collect();
-
-        outgoing.insert(id, targets);
+        outgoing.insert(id, parse_targets(&content));
     }
 
     // Invert to build backlinks.
@@ -90,6 +94,39 @@ pub fn build_index(vault: &Path) -> LinkIndex {
         outgoing,
         backlinks,
     }
+}
+
+/// Update the index for a single note after its content changed.
+///
+/// Removes the note's previous outgoing links (and the backlinks they
+/// contributed) and re-reads only this file, avoiding a full vault rescan on
+/// every save.  Missing files are ignored (the caller rebuilds fully on
+/// rename/delete/create).
+pub fn update_note(index: &mut LinkIndex, vault: &Path, id: &str) {
+    if let Some(old_targets) = index.outgoing.remove(id) {
+        for target in old_targets {
+            if let Some(sources) = index.backlinks.get_mut(&target) {
+                sources.retain(|source| source != id);
+            }
+        }
+        // Don't leave empty vectors behind as the file set changes.
+        index.backlinks.retain(|_, sources| !sources.is_empty());
+    }
+
+    let path = vault.join(id);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let targets = parse_targets(&content);
+    for target in &targets {
+        index
+            .backlinks
+            .entry(target.clone())
+            .or_default()
+            .push(id.to_owned());
+    }
+    index.outgoing.insert(id.to_owned(), targets);
 }
 
 /// Return the list of note IDs that link **to** *id*.
@@ -157,5 +194,26 @@ mod tests {
         let idx = build_index(vault);
         assert!(idx.outgoing.contains_key("A.md"));
         assert!(idx.outgoing.contains_key("B.md"));
+    }
+
+    #[test]
+    fn update_note_refreshes_links_incrementally() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        fs::write(vault.join("A.md"), "see [[B]]").unwrap();
+        fs::write(vault.join("B.md"), "").unwrap();
+
+        let mut idx = build_index(vault);
+        assert!(idx.backlinks["b.md"].contains(&"A.md".to_string()));
+
+        // A now links to C instead of B.
+        fs::write(vault.join("A.md"), "see [[C]]").unwrap();
+        fs::write(vault.join("C.md"), "").unwrap();
+        update_note(&mut idx, vault, "A.md");
+
+        assert!(!idx.outgoing["A.md"].contains(&"b.md".to_string()));
+        assert!(idx.outgoing["A.md"].contains(&"c.md".to_string()));
+        assert!(!idx.backlinks.contains_key("b.md"));
+        assert!(idx.backlinks["c.md"].contains(&"A.md".to_string()));
     }
 }
