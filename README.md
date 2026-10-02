@@ -29,10 +29,71 @@ Plain `.md` files in a plain folder — no database, no proprietary format.
 
 ## Requirements
 
-- Rust 1.70 or later (`rustup update stable`)
-- A working C linker (`build-essential` / `gcc` on Debian-based distros)
-- GTK3 development headers (used only for the native folder dialog)
-- X11 or Wayland display server (Slint uses `winit` + software renderer by default)
+### 1. Rust toolchain
+
+Rustidian needs **Rust 1.92 or newer** (Slint 1.18 uses the 2024 edition). Install
+it with the official `rustup` script — it is **not** installed through the distro
+package manager:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+Then add the components used by the development workflow (formatting and linting):
+
+```bash
+rustup component add rustfmt clippy
+```
+
+Check the version with `rustc --version`; it must print `1.92` or later.
+
+### 2. System dependencies
+
+Rustidian links against a few C libraries at build time:
+
+| Library | Needed for |
+|---|---|
+| C toolchain (`gcc`/`cc`, `make`) | compiling and linking the binary |
+| `pkg-config` | locating the libraries below during the build |
+| **GTK3** development headers | the native folder picker (`rfd`, GTK3 backend) |
+| **xkbcommon** | keyboard input in Slint's `winit` backend |
+| **xcb** (`shape` + `xfixes`) | X11 windowing in Slint's `winit` backend |
+| **fontconfig** | system-font enumeration in Slint |
+
+Install everything with the command for your distribution:
+
+#### Arch Linux (and derivatives)
+
+```bash
+sudo pacman -S --needed base-devel curl pkgconf gtk3 libxkbcommon libxcb fontconfig
+```
+
+#### Debian / Ubuntu (and derivatives)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential curl pkg-config libgtk-3-dev \
+    libxkbcommon-dev libxkbcommon-x11-dev \
+    libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+    libfontconfig1-dev
+```
+
+#### Fedora / RHEL / CentOS (and derivatives)
+
+```bash
+sudo dnf install -y gcc gcc-c++ make curl pkgconf-pkg-config gtk3-devel \
+    libxkbcommon-devel libxkbcommon-x11-devel \
+    libxcb-devel fontconfig-devel
+```
+
+### 3. Display server
+
+Slint renders through `winit` with the software renderer, so an X11 session is
+enough — that is the target environment (old laptops running IceWM/X11). Wayland
+also works, but then the Wayland client libraries (`libwayland-client`,
+`libxkbcommon`) must be present at runtime. No GPU or OpenGL acceleration is
+required.
 
 ---
 

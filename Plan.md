@@ -172,10 +172,15 @@ thiserror = "2"
 dirs = "5"
 walkdir = "2"
 regex = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 
 [dependencies.petgraph]
 version = "0.6"
 optional = true
+
+[dev-dependencies]
+tempfile = "3"
 
 [features]
 graph = ["dep:petgraph"]
@@ -186,14 +191,26 @@ graph = ["dep:petgraph"]
 ```toml
 [dependencies]
 rustidian-core = { path = "../rustidian-core" }
-slint = { version = "1.17", default-features = false, features = ["backend-winit", "renderer-software"] }
+slint = { version = "1.18", default-features = false, features = ["backend-winit", "renderer-software", "compat-1-18"] }
+dirs = "5"
+# Selector de carpeta nativo (backend GTK3, disponible en X11).
+rfd = { version = "0.17", default-features = false, features = ["gtk3"] }
 
 [build-dependencies]
-slint-build = "1.17"
+slint-build = "1.18"
 
 [features]
 graph = ["rustidian-core/graph"]
 ```
+
+**Dependencias del sistema (Linux).** Además del toolchain de Rust (instalado
+con el script de `rustup`, no con el gestor de paquetes de la distro), la
+compilación necesita: un toolchain de C (`gcc`/`make`), `pkg-config`, las
+cabeceras de desarrollo de **GTK3** (para `rfd`), **xkbcommon**, **xcb**
+(`shape` + `xfixes`) y **fontconfig** (para el backend `winit` de Slint). El
+comando de instalación para Arch, Debian/Ubuntu y Fedora/RHEL está en el
+[README, sección *Requirements*](README.md#requirements). Se requiere **Rust
+1.92 o superior** (Slint 1.18 usa la edición 2024).
 
 Cómo se organiza en la práctica:
 
