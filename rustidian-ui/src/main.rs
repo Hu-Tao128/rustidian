@@ -643,6 +643,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // ── Flush pending changes before the window closes ────────────────────────
+    //
+    // The autosave timer is a debounce, so a quick type-then-close could lose
+    // the last keystrokes.  Persist the active note synchronously first, then
+    // let the window hide (returning `HideWindow` is the default action).
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.window().on_close_requested(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let id = ui.get_current_note_id().to_string();
+                let content = ui.get_current_note_content().to_string();
+                if !id.is_empty() && ui.get_unsaved() {
+                    let data = shared2.lock().unwrap();
+                    if let Err(e) = vault::write_note(&data.vault_path, &id, &content) {
+                        eprintln!("[rustidian] error saving on close: {e}");
+                    }
+                }
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+    }
+
     ui.run()?;
     Ok(())
 }
