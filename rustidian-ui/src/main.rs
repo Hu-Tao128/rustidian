@@ -66,6 +66,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(vault) = initial_vault {
         open_vault(vault.clone(), Arc::clone(&shared), ui.as_weak());
+        // Restore the previous session (open tabs + active note) when the saved
+        // config belongs to this same vault.
+        if let Some(cfg) = config.as_ref().filter(|c| c.vault_path == vault) {
+            restore_session(&ui, &vault, &cfg.open_tabs, &cfg.active_note);
+        }
         let refresh = make_refresh(ui.as_weak(), Arc::clone(&shared));
         worker::rebuild_index(vault, Arc::clone(&shared), refresh);
     } else {
@@ -174,6 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Ok(data) = shared2.lock() {
                     refresh_sidebar(&ui, &data);
                 }
+                persist_session(&ui, &shared2);
             }
         });
     }
@@ -312,6 +318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_status_kind(StatusKind::Success);
                     ui.set_status_message(format!("Created: {title}").into());
                     add_or_activate_tab(&ui, &new_id, &title);
+                    persist_session(&ui, &shared2);
                     let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
                     worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
                 }
@@ -351,6 +358,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     ui.set_status_kind(StatusKind::Success);
                     ui.set_status_message("Note deleted.".into());
+                    persist_session(&ui, &shared2);
                     let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
                     worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
                 }
@@ -388,6 +396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     rename_tab(&ui, &id_str, &new_id, &new_title_str);
                     ui.set_status_kind(StatusKind::Success);
                     ui.set_status_message(format!("Renamed to \"{new_title_str}\"").into());
+                    persist_session(&ui, &shared2);
                     let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
                     worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
                 }
@@ -442,6 +451,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     ui.set_status_kind(StatusKind::Success);
                     ui.set_status_message(format!("Moved to {destination}").into());
+                    persist_session(&ui, &shared2);
                     let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
                     worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
                 }
@@ -500,6 +510,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_backlinks(ModelRc::new(VecModel::from(vec![])));
                 }
             }
+            persist_session(&ui, &shared2);
         });
     }
 
@@ -594,6 +605,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut config = Config::load().unwrap_or(Config {
                 vault_path: PathBuf::new(),
                 dark_mode: dark,
+                open_tabs: Vec::new(),
+                active_note: String::new(),
             });
             config.dark_mode = dark;
             let _ = config.save();
@@ -661,6 +674,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("[rustidian] error saving on close: {e}");
                     }
                 }
+                // Remember the tab set and active note for next launch.
+                persist_session(&ui, &shared2);
             }
             slint::CloseRequestResponse::HideWindow
         });
@@ -752,6 +767,76 @@ fn make_refresh(
     }
 }
 
+/// Restore the open tabs and active note saved in the config.
+///
+/// Tabs whose files no longer exist are dropped.  The previously active note
+/// is opened; if it is gone, the last surviving tab is used instead.
+fn restore_session(ui: &AppWindow, vault: &std::path::Path, tabs: &[String], active: &str) {
+    let items: Vec<TabItem> = tabs
+        .iter()
+        .filter_map(|id| vault::read_note(vault, id).ok())
+        .map(|note| TabItem {
+            id: note.meta.id.into(),
+            title: note.meta.title.into(),
+            unsaved: false,
+        })
+        .collect();
+    let count = items.len();
+    ui.set_open_tabs(ModelRc::new(VecModel::from(items)));
+
+    // Try the previously active note first, then the surviving tabs last-to-first.
+    let candidates = std::iter::once(active.to_owned()).chain(
+        (0..count)
+            .rev()
+            .filter_map(|i| ui.get_open_tabs().row_data(i))
+            .map(|t| t.id.to_string()),
+    );
+    for id in candidates {
+        if id.is_empty() {
+            continue;
+        }
+        if let Ok(note) = vault::read_note(vault, &id) {
+            ui.set_current_note_id(note.meta.id.clone().into());
+            ui.set_current_note_title(note.meta.title.clone().into());
+            ui.set_current_note_content(note.content.clone().into());
+            render_preview(ui, &note.content);
+            ui.set_unsaved(false);
+            ui.set_status_kind(StatusKind::Success);
+            ui.set_status_message(format!("Opened: {}", note.meta.title).into());
+            break;
+        }
+    }
+}
+
+/// Persist the open tabs and active note to the config file.
+fn persist_session(ui: &AppWindow, shared: &Arc<Mutex<AppData>>) {
+    let vault = {
+        let data = shared.lock().unwrap();
+        data.vault_path.clone()
+    };
+    if vault.as_os_str().is_empty() {
+        return;
+    }
+
+    let tabs_model = ui.get_open_tabs();
+    let tabs: Vec<String> = (0..tabs_model.row_count())
+        .filter_map(|i| tabs_model.row_data(i))
+        .map(|t| t.id.to_string())
+        .collect();
+
+    let mut config = Config::load().unwrap_or(Config {
+        vault_path: vault.clone(),
+        dark_mode: ui.get_dark_mode(),
+        open_tabs: Vec::new(),
+        active_note: String::new(),
+    });
+    config.vault_path = vault;
+    config.dark_mode = ui.get_dark_mode();
+    config.open_tabs = tabs;
+    config.active_note = ui.get_current_note_id().to_string();
+    let _ = config.save();
+}
+
 /// Set the vault path in shared state and update the UI status bar.
 fn open_vault(vault: PathBuf, shared: Arc<Mutex<AppData>>, ui_weak: slint::Weak<AppWindow>) {
     {
@@ -769,8 +854,13 @@ fn activate_vault(path: PathBuf, shared: Arc<Mutex<AppData>>, ui_weak: slint::We
     let mut config = Config::load().unwrap_or(Config {
         vault_path: path.clone(),
         dark_mode: true,
+        open_tabs: Vec::new(),
+        active_note: String::new(),
     });
     config.vault_path = path.clone();
+    // A different vault starts with a fresh session.
+    config.open_tabs = Vec::new();
+    config.active_note = String::new();
     let _ = config.save();
 
     if let Some(ui) = ui_weak.upgrade() {

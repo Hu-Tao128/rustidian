@@ -16,6 +16,13 @@ pub struct Config {
     /// the light (Catppuccin Latte) theme.
     #[serde(default = "default_dark_mode")]
     pub dark_mode: bool,
+    /// Note ids (paths relative to the vault) of the tabs that were open, in
+    /// sidebar/tab order.  Missing entries are dropped on load.
+    #[serde(default)]
+    pub open_tabs: Vec<String>,
+    /// Note id that was active when the app last closed, so it can be restored.
+    #[serde(default)]
+    pub active_note: String,
 }
 
 impl Config {
@@ -36,6 +43,8 @@ impl Config {
             return Ok(Config {
                 vault_path: default_vault,
                 dark_mode: default_dark_mode(),
+                open_tabs: Vec::new(),
+                active_note: String::new(),
             });
         }
         let raw = std::fs::read_to_string(&path)?;
@@ -82,9 +91,33 @@ mod tests {
         let config = Config {
             vault_path: PathBuf::from("/tmp/notes"),
             dark_mode: false,
+            open_tabs: Vec::new(),
+            active_note: String::new(),
         };
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();
         assert!(!parsed.dark_mode);
+    }
+
+    #[test]
+    fn config_without_session_fields_defaults_to_empty() {
+        let raw = "vault_path = \"/tmp/notes\"\n";
+        let config: Config = toml::from_str(raw).unwrap();
+        assert!(config.open_tabs.is_empty());
+        assert!(config.active_note.is_empty());
+    }
+
+    #[test]
+    fn config_roundtrips_session() {
+        let config = Config {
+            vault_path: PathBuf::from("/tmp/notes"),
+            dark_mode: true,
+            open_tabs: vec!["A.md".into(), "Sub/B.md".into()],
+            active_note: "Sub/B.md".into(),
+        };
+        let raw = toml::to_string_pretty(&config).unwrap();
+        let parsed: Config = toml::from_str(&raw).unwrap();
+        assert_eq!(parsed.open_tabs, vec!["A.md", "Sub/B.md"]);
+        assert_eq!(parsed.active_note, "Sub/B.md");
     }
 }
