@@ -12,6 +12,9 @@ pub enum CoreError {
     #[error("a note with that name already exists: {0}")]
     NameCollision(String),
 
+    #[error("invalid name: {0}")]
+    InvalidName(String),
+
     #[error("could not parse configuration: {0}")]
     Config(String),
 }

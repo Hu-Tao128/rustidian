@@ -98,8 +98,10 @@ pub fn list_notes(vault: &Path) -> Result<Vec<NoteMeta>, CoreError> {
 /// (`name == ""`, `path == ""`).  The root's `notes` are the notes stored
 /// directly in the vault folder and its `children` are the sub-folders,
 /// sorted alphabetically.  Notes inside each folder are sorted by title.
+///
+/// Every sub-directory is included, even when it holds no notes, so folders
+/// created from the UI show up immediately.
 pub fn list_notes_tree(vault: &Path) -> Result<Vec<FolderNode>, CoreError> {
-    let notes = list_notes(vault)?;
     let mut root = FolderNode {
         name: String::new(),
         path: String::new(),
@@ -107,21 +109,75 @@ pub fn list_notes_tree(vault: &Path) -> Result<Vec<FolderNode>, CoreError> {
         children: Vec::new(),
     };
 
-    for note in notes {
-        let parent = Path::new(&note.id)
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if parent.is_empty() {
-            root.notes.push(note);
-        } else {
-            let segments: Vec<&str> = parent.split('/').collect();
-            insert_note(&mut root, &segments, note);
+    for entry in WalkDir::new(vault)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path == vault {
+            continue;
+        }
+        let rel = relative_id(vault, path);
+
+        if entry.file_type().is_dir() {
+            ensure_folder(&mut root, &rel);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            let note = NoteMeta {
+                id: rel.clone(),
+                title: title_from_path(path),
+            };
+            let parent = Path::new(&rel)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if parent.is_empty() {
+                root.notes.push(note);
+            } else {
+                let segments: Vec<&str> = parent.split('/').collect();
+                insert_note(&mut root, &segments, note);
+            }
         }
     }
 
     sort_tree(&mut root);
     Ok(vec![root])
+}
+
+/// Make sure the folder described by *path* exists in the tree (creating any
+/// missing ancestors), without attaching a note.
+fn ensure_folder(node: &mut FolderNode, path: &str) {
+    if path.is_empty() {
+        return;
+    }
+    let segments: Vec<&str> = path.split('/').collect();
+    insert_folder(node, &segments);
+}
+
+/// Recursively create the child folders described by *segments*.
+fn insert_folder(node: &mut FolderNode, segments: &[&str]) {
+    if segments.is_empty() {
+        return;
+    }
+    let segment = segments[0];
+    let child_path = if node.path.is_empty() {
+        segment.to_owned()
+    } else {
+        format!("{}/{}", node.path, segment)
+    };
+    let index = match node.children.iter().position(|c| c.name == segment) {
+        Some(i) => i,
+        None => {
+            node.children.push(FolderNode {
+                name: segment.to_owned(),
+                path: child_path,
+                notes: Vec::new(),
+                children: Vec::new(),
+            });
+            node.children.len() - 1
+        }
+    };
+    insert_folder(&mut node.children[index], &segments[1..]);
 }
 
 /// Recursively insert *note* into the child folder described by *segments*.
@@ -298,6 +354,88 @@ pub fn delete_note(vault: &Path, id: &str) -> Result<(), CoreError> {
         return Err(CoreError::NotFound(id.to_owned()));
     }
     std::fs::remove_file(path)?;
+    Ok(())
+}
+
+/// Validate a single folder segment (no separators, no `.`/`..`, not empty).
+fn is_valid_folder_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && is_safe_relative(name)
+        && name != "."
+}
+
+/// Create a new folder named *name* inside *parent* (relative to the vault
+/// root, `""` for the root itself).
+///
+/// Returns the new folder path relative to the vault root.
+pub fn create_folder(vault: &Path, parent: &str, name: &str) -> Result<String, CoreError> {
+    let parent = parent.trim().trim_matches('/');
+    if !is_safe_relative(parent) {
+        return Err(CoreError::NotFound(parent.to_owned()));
+    }
+    let name = name.trim();
+    if !is_valid_folder_name(name) {
+        return Err(CoreError::InvalidName(name.to_owned()));
+    }
+
+    let dir = if parent.is_empty() {
+        vault.to_path_buf()
+    } else {
+        vault.join(parent)
+    };
+    let path = dir.join(name);
+    if path.exists() {
+        return Err(CoreError::NameCollision(relative_id(vault, &path)));
+    }
+    std::fs::create_dir_all(&path)?;
+    Ok(relative_id(vault, &path))
+}
+
+/// Rename a folder, keeping it in the same parent and moving its contents.
+///
+/// Returns the new folder path relative to the vault root.
+pub fn rename_folder(vault: &Path, path: &str, new_name: &str) -> Result<String, CoreError> {
+    let path = path.trim().trim_matches('/');
+    if path.is_empty() || !is_safe_relative(path) {
+        return Err(CoreError::NotFound(path.to_owned()));
+    }
+    let old_path = vault.join(path);
+    if !old_path.is_dir() {
+        return Err(CoreError::NotFound(path.to_owned()));
+    }
+
+    let new_name = new_name.trim();
+    if !is_valid_folder_name(new_name) {
+        return Err(CoreError::InvalidName(new_name.to_owned()));
+    }
+
+    let parent = old_path.parent().unwrap_or(vault);
+    let new_path = parent.join(new_name);
+    let old_rel = relative_id(vault, &old_path);
+    let new_rel = relative_id(vault, &new_path);
+    if new_rel == old_rel {
+        return Ok(new_rel);
+    }
+    if new_path.exists() {
+        return Err(CoreError::NameCollision(new_rel));
+    }
+    std::fs::rename(&old_path, &new_path)?;
+    Ok(new_rel)
+}
+
+/// Delete a folder and everything inside it.
+pub fn delete_folder(vault: &Path, path: &str) -> Result<(), CoreError> {
+    let path = path.trim().trim_matches('/');
+    if path.is_empty() || !is_safe_relative(path) {
+        return Err(CoreError::NotFound(path.to_owned()));
+    }
+    let dir = vault.join(path);
+    if !dir.is_dir() {
+        return Err(CoreError::NotFound(path.to_owned()));
+    }
+    std::fs::remove_dir_all(dir)?;
     Ok(())
 }
 
@@ -516,6 +654,81 @@ mod tests {
         let vault = dir.path();
         // A crafted id must not escape the vault.
         let err = move_note(vault, "../outside.md", "Folder").unwrap_err();
+        assert!(matches!(err, CoreError::NotFound(_)));
+    }
+
+    #[test]
+    fn create_folder_builds_nested_path() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+
+        let path = create_folder(vault, "Proyectos", "2024").unwrap();
+        assert_eq!(path, "Proyectos/2024");
+        assert!(vault.join("Proyectos/2024").is_dir());
+
+        // It shows up in the tree even though it has no notes.
+        let tree = list_notes_tree(vault).unwrap();
+        assert_eq!(tree[0].children[0].name, "Proyectos");
+        assert_eq!(tree[0].children[0].children[0].name, "2024");
+    }
+
+    #[test]
+    fn create_folder_collision_returns_error() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        create_folder(vault, "", "Dup").unwrap();
+        let err = create_folder(vault, "", "Dup").unwrap_err();
+        assert!(matches!(err, CoreError::NameCollision(_)));
+    }
+
+    #[test]
+    fn create_folder_rejects_invalid_name() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        for bad in ["", "..", "a/b", "."] {
+            let err = create_folder(vault, "", bad).unwrap_err();
+            assert!(matches!(err, CoreError::InvalidName(_)), "name {bad:?}");
+        }
+    }
+
+    #[test]
+    fn rename_folder_moves_its_notes() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        create_note_in(vault, "Old", "Note").unwrap();
+
+        let new_path = rename_folder(vault, "Old", "New").unwrap();
+        assert_eq!(new_path, "New");
+        assert!(vault.join("New/Note.md").is_file());
+        assert!(!vault.join("Old").exists());
+    }
+
+    #[test]
+    fn rename_folder_collision_returns_error() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        create_folder(vault, "", "A").unwrap();
+        create_folder(vault, "", "B").unwrap();
+        let err = rename_folder(vault, "A", "B").unwrap_err();
+        assert!(matches!(err, CoreError::NameCollision(_)));
+    }
+
+    #[test]
+    fn delete_folder_removes_contents() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        create_note_in(vault, "Temp", "Note").unwrap();
+
+        delete_folder(vault, "Temp").unwrap();
+        assert!(!vault.join("Temp").exists());
+        assert!(list_notes(vault).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_folder_rejects_root() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        let err = delete_folder(vault, "").unwrap_err();
         assert!(matches!(err, CoreError::NotFound(_)));
     }
 }

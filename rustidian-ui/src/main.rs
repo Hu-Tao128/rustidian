@@ -465,6 +465,115 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // ── new-folder-requested ──────────────────────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_new_folder_requested(move || {
+            let (vault, parent) = {
+                let data = shared2.lock().unwrap();
+                (data.vault_path.clone(), data.selected_folder.clone())
+            };
+            if vault.as_os_str().is_empty() {
+                return;
+            }
+            let name = next_folder_name(&vault, &parent);
+            match vault::create_folder(&vault, &parent, &name) {
+                Ok(path) => {
+                    let ui = match ui_weak.upgrade() {
+                        Some(u) => u,
+                        None => return,
+                    };
+                    ui.set_status_kind(StatusKind::Success);
+                    ui.set_status_message(format!("Created folder: {path}").into());
+                    let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
+                    worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
+                }
+                Err(e) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_status_kind(StatusKind::Error);
+                        ui.set_status_message(format!("Error creating folder: {e}").into());
+                    }
+                }
+            }
+        });
+    }
+
+    // ── rename-folder-requested ───────────────────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_rename_folder_requested(move |path, new_name| {
+            let path_str = path.to_string();
+            let new_name_str = new_name.to_string();
+            let vault = {
+                let data = shared2.lock().unwrap();
+                data.vault_path.clone()
+            };
+            match vault::rename_folder(&vault, &path_str, &new_name_str) {
+                Ok(new_path) => {
+                    let ui = match ui_weak.upgrade() {
+                        Some(u) => u,
+                        None => return,
+                    };
+                    // Notes inside the renamed folder change id, so fix the
+                    // open tabs, the active note and the stored UI state.
+                    remap_tabs(&ui, &path_str, &new_path);
+                    if let Ok(mut data) = shared2.lock() {
+                        remap_folder_state(&mut data, &path_str, &new_path);
+                    }
+                    ui.set_status_kind(StatusKind::Success);
+                    ui.set_status_message(format!("Renamed folder to \"{new_path}\"").into());
+                    persist_session(&ui, &shared2);
+                    let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
+                    worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
+                }
+                Err(e) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_status_kind(StatusKind::Error);
+                        ui.set_status_message(format!("Rename folder error: {e}").into());
+                    }
+                }
+            }
+        });
+    }
+
+    // ── delete-folder-requested ───────────────────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_delete_folder_requested(move |path| {
+            let path_str = path.to_string();
+            let vault = {
+                let data = shared2.lock().unwrap();
+                data.vault_path.clone()
+            };
+            match vault::delete_folder(&vault, &path_str) {
+                Ok(()) => {
+                    let ui = match ui_weak.upgrade() {
+                        Some(u) => u,
+                        None => return,
+                    };
+                    drop_tabs_in_folder(&ui, &path_str);
+                    if let Ok(mut data) = shared2.lock() {
+                        drop_folder_state(&mut data, &path_str);
+                    }
+                    ui.set_status_kind(StatusKind::Success);
+                    ui.set_status_message(format!("Deleted folder: {path_str}").into());
+                    persist_session(&ui, &shared2);
+                    let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
+                    worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
+                }
+                Err(e) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_status_kind(StatusKind::Error);
+                        ui.set_status_message(format!("Delete folder error: {e}").into());
+                    }
+                }
+            }
+        });
+    }
+
     // ── tab-closed ────────────────────────────────────────────────────────────
     {
         let ui_weak = ui.as_weak();
@@ -895,6 +1004,115 @@ fn next_untitled_name(vault: &std::path::Path, folder: &str) -> String {
         }
         n += 1;
     }
+}
+
+/// Return a "New folder N" name that does not collide inside *parent*.
+fn next_folder_name(vault: &std::path::Path, parent: &str) -> String {
+    let dir = if parent.trim().is_empty() {
+        vault.to_path_buf()
+    } else {
+        vault.join(parent.trim())
+    };
+    let mut n = 1u32;
+    loop {
+        let name = if n == 1 {
+            "New folder".to_owned()
+        } else {
+            format!("New folder {n}")
+        };
+        if !dir.join(&name).exists() {
+            return name;
+        }
+        n += 1;
+    }
+}
+
+/// Remap folder expansion/selection state after a folder rename.
+fn remap_folder_state(data: &mut AppData, old: &str, new: &str) {
+    let prefix = format!("{old}/");
+    if data.selected_folder == old {
+        data.selected_folder = new.to_owned();
+    } else if let Some(rest) = data.selected_folder.strip_prefix(&prefix) {
+        data.selected_folder = format!("{new}/{rest}");
+    }
+
+    let mut moved: Vec<(String, bool)> = Vec::new();
+    data.expanded.retain(|key, value| {
+        if key == old {
+            moved.push((new.to_owned(), *value));
+            false
+        } else if let Some(rest) = key.strip_prefix(&prefix) {
+            moved.push((format!("{new}/{rest}"), *value));
+            false
+        } else {
+            true
+        }
+    });
+    for (key, value) in moved {
+        data.expanded.insert(key, value);
+    }
+}
+
+/// Drop folder expansion/selection state after a folder deletion.
+fn drop_folder_state(data: &mut AppData, path: &str) {
+    let prefix = format!("{path}/");
+    data.expanded
+        .retain(|key, _| key != path && !key.starts_with(&prefix));
+    if data.selected_folder == path || data.selected_folder.starts_with(&prefix) {
+        data.selected_folder = String::new();
+    }
+}
+
+/// Rewrite open tab ids and the active note after a folder rename.
+fn remap_tabs(ui: &AppWindow, old: &str, new: &str) {
+    let prefix = format!("{old}/");
+    let remap = |id: &str| -> String {
+        if let Some(rest) = id.strip_prefix(&prefix) {
+            format!("{new}/{rest}")
+        } else if id == old {
+            new.to_owned()
+        } else {
+            id.to_owned()
+        }
+    };
+
+    let tabs_model = ui.get_open_tabs();
+    let tabs: Vec<TabItem> = (0..tabs_model.row_count())
+        .filter_map(|i| tabs_model.row_data(i))
+        .map(|t| TabItem {
+            id: remap(&t.id).into(),
+            title: t.title,
+            unsaved: t.unsaved,
+        })
+        .collect();
+    ui.set_open_tabs(ModelRc::new(VecModel::from(tabs)));
+
+    let current = ui.get_current_note_id().to_string();
+    let remapped = remap(&current);
+    if remapped != current {
+        ui.set_current_note_id(remapped.into());
+    }
+}
+
+/// Remove tabs (and clear the active note) that lived inside a deleted folder.
+fn drop_tabs_in_folder(ui: &AppWindow, path: &str) {
+    let prefix = format!("{path}/");
+    let current = ui.get_current_note_id().to_string();
+    if current.starts_with(&prefix) {
+        ui.set_current_note_id("".into());
+        ui.set_current_note_title("".into());
+        ui.set_current_note_content("".into());
+        render_preview(ui, "");
+        ui.set_backlinks(ModelRc::new(VecModel::from(vec![])));
+        ui.set_unsaved(false);
+    }
+
+    let tabs_model = ui.get_open_tabs();
+    let tabs: Vec<TabItem> = (0..tabs_model.row_count())
+        .filter_map(|i| tabs_model.row_data(i))
+        .filter(|t| !t.id.starts_with(&prefix))
+        .collect();
+    ui.set_open_tabs(ModelRc::new(VecModel::from(tabs)));
 }
 
 /// Add a tab for `id`/`title` if it doesn't exist yet, then make it active.

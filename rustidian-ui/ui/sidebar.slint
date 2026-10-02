@@ -16,11 +16,14 @@ export component Sidebar inherits Rectangle {
     callback note-selected(string);
     callback folder-toggled(string);
     callback new-note-requested();
+    callback new-folder-requested();
     callback delete-requested(string);
     callback search-changed(string);
     callback vault-change-requested();
-    callback rename-requested(string, string);   // (id, new-title)
-    callback note-moved(string, string);         // (id, target-folder)
+    callback rename-requested(string, string);        // (id, new-title)
+    callback note-moved(string, string);              // (id, target-folder)
+    callback rename-folder-requested(string, string); // (folder path, new-name)
+    callback delete-folder-requested(string);         // (folder path)
 
     // Which list to show: tree or search results
     property <bool> searching: search-box.text != "";
@@ -30,6 +33,10 @@ export component Sidebar inherits Rectangle {
 
     // Which note row is in inline-rename mode (right-click activates this)
     property <string> renaming-id: "";
+
+    // Folder row state (right-click = rename, ✕ = delete confirmation)
+    property <string> renaming-folder-id: "";
+    property <string> pending-delete-folder-id: "";
 
     VerticalBox {
         padding: 8px;
@@ -74,10 +81,15 @@ export component Sidebar inherits Rectangle {
             edited(q) => { root.search-changed(q); }
         }
 
-        // ── New note button ───────────────────────────────────────────────────
+        // ── New note / new folder buttons ─────────────────────────────────────
         Button {
             text: "+ New note    Ctrl+N";
             clicked => { root.new-note-requested(); }
+        }
+
+        Button {
+            text: "+ New folder";
+            clicked => { root.new-folder-requested(); }
         }
 
         // ── Section label ─────────────────────────────────────────────────────
@@ -157,8 +169,10 @@ export component Sidebar inherits Rectangle {
                     width: parent.width;
                     height: parent.height;
                     for row in root.tree: Rectangle {
-                height: row.kind == TreeRowKind.note && row.id == root.pending-delete-id ? 56px
-                      : row.kind == TreeRowKind.note && row.id == root.renaming-id      ? 40px
+                height: (row.kind == TreeRowKind.note && row.id == root.pending-delete-id)
+                        || (row.kind == TreeRowKind.folder && row.id == root.pending-delete-folder-id) ? 56px
+                      : (row.kind == TreeRowKind.note && row.id == root.renaming-id)
+                        || (row.kind == TreeRowKind.folder && row.id == root.renaming-folder-id) ? 40px
                       : row.kind == TreeRowKind.folder                                  ? 26px
                       : 30px;
                 background: row.kind == TreeRowKind.note && row.id == root.pending-delete-id
@@ -170,11 +184,13 @@ export component Sidebar inherits Rectangle {
                             : transparent));
                 border-radius: 4px;
 
-                // ── Folder row (drop target) ──────────────────────────────────
+                // ── Folder row (drop target + rename / delete) ────────────────
                 if row.kind == TreeRowKind.folder: Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    background: folder-drop.has-drag ? Palette.card : transparent;
+                    background: folder-drop.has-drag
+                        || row.id == root.pending-delete-folder-id
+                        || row.id == root.renaming-folder-id ? Palette.card : transparent;
                     border-width: folder-drop.has-drag ? 1px : 0px;
                     border-color: Palette.accent;
                     border-radius: 4px;
@@ -190,35 +206,158 @@ export component Sidebar inherits Rectangle {
                             return DragAction.move;
                         }
 
-                        folder-touch := TouchArea {
+                        // Inline rename (right-click activates this)
+                        if row.id == root.renaming-folder-id: HorizontalBox {
+                            padding-left: 8px + row.depth * 14px;
+                            padding-right: 4px;
+                            spacing: 4px;
                             width: parent.width;
                             height: parent.height;
-                            mouse-cursor: pointer;
-                            clicked => { root.folder-toggled(row.id); }
-                        }
 
-                        HorizontalBox {
-                            padding-left: 8px + row.depth * 14px;
-                            padding-right: 6px;
-                            spacing: 4px;
-                            alignment: start;
-
-                            Text {
-                                text: row.expanded ? "▾" : "▸";
-                                color: Palette.text-muted;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                                width: 12px;
+                            folder-rename-edit := LineEdit {
+                                text: row.name;
+                                font-size: 13px;
+                                horizontal-stretch: 1;
+                                height: 28px;
+                                accepted(new-name) => {
+                                    if new-name != "" && new-name != row.name {
+                                        root.rename-folder-requested(row.id, new-name);
+                                    }
+                                    root.renaming-folder-id = "";
+                                }
                             }
 
+                            cancel-folder-rename := TouchArea {
+                                width: 22px;
+                                height: 22px;
+                                mouse-cursor: pointer;
+                                clicked => { root.renaming-folder-id = ""; }
+
+                                Rectangle {
+                                    background: cancel-folder-rename.has-hover ? Palette.card : transparent;
+                                    border-radius: 3px;
+                                    width: parent.width;
+                                    height: parent.height;
+                                    Text {
+                                        text: "✕";
+                                        color: Palette.text-muted;
+                                        font-size: 11px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Delete confirmation
+                        if row.id == root.pending-delete-folder-id: VerticalBox {
+                            padding: 4px;
+                            spacing: 4px;
+                            width: parent.width;
+                            height: parent.height;
+
                             Text {
-                                text: "📁 " + row.name;
-                                color: Palette.text;
-                                font-size: 13px;
-                                font-weight: row.is-selected-folder ? 600 : 500;
-                                vertical-alignment: center;
+                                text: "Delete folder \"" + row.name + "\" and its notes?";
+                                color: Palette.danger;
+                                font-size: 12px;
+                                font-weight: 600;
                                 overflow: elide;
-                                horizontal-stretch: 1;
+                            }
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                Button {
+                                    text: "Delete";
+                                    height: 22px;
+                                    clicked => {
+                                        root.delete-folder-requested(row.id);
+                                        root.pending-delete-folder-id = "";
+                                    }
+                                }
+                                Button {
+                                    text: "Cancel";
+                                    height: 22px;
+                                    clicked => { root.pending-delete-folder-id = ""; }
+                                }
+                            }
+                        }
+
+                        // Normal row: click toggles, right-click renames, ✕ deletes
+                        if row.id != root.renaming-folder-id && row.id != root.pending-delete-folder-id: Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            background: transparent;
+
+                            folder-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { root.folder-toggled(row.id); }
+                                pointer-event(ev) => {
+                                    if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
+                                        root.renaming-folder-id = row.id;
+                                        root.pending-delete-folder-id = "";
+                                    }
+                                }
+                            }
+
+                            HorizontalBox {
+                                padding-left: 8px + row.depth * 14px;
+                                padding-right: 4px;
+                                alignment: space-between;
+
+                                HorizontalBox {
+                                    alignment: start;
+                                    spacing: 4px;
+                                    horizontal-stretch: 1;
+
+                                    Text {
+                                        text: row.expanded ? "▾" : "▸";
+                                        color: Palette.text-muted;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
+                                        width: 12px;
+                                    }
+
+                                    Text {
+                                        text: "📁 " + row.name;
+                                        color: Palette.text;
+                                        font-size: 13px;
+                                        font-weight: row.is-selected-folder ? 600 : 500;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+
+                                folder-del-touch := TouchArea {
+                                    width: 26px;
+                                    height: 26px;
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.pending-delete-folder-id = row.id;
+                                        root.renaming-folder-id = "";
+                                    }
+
+                                    Rectangle {
+                                        background: folder-del-touch.has-hover ? Palette.card : transparent;
+                                        border-radius: 4px;
+                                        width: parent.width;
+                                        height: parent.height;
+
+                                        Text {
+                                            text: "✕";
+                                            color: folder-del-touch.has-hover ? Palette.danger : Palette.text-muted;
+                                            font-size: 12px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

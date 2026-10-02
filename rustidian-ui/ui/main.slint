@@ -65,8 +65,11 @@ export component AppWindow inherits Window {
     callback content-changed(string);
     callback save-requested();
     callback new-note-requested();
+    callback new-folder-requested();
     callback rename-requested(string, string);
+    callback rename-folder-requested(string, string);
     callback delete-requested(string);
+    callback delete-folder-requested(string);
     // note-moved(note-id, target-folder) — a note was dropped onto a folder
     callback note-moved(string, string);
     callback search-changed(string);
@@ -151,11 +154,14 @@ export component AppWindow inherits Window {
             note-selected(id) => { root.note-selected(id); }
             folder-toggled(path) => { root.folder-toggled(path); }
             new-note-requested() => { root.new-note-requested(); }
+            new-folder-requested() => { root.new-folder-requested(); }
             delete-requested(id) => { root.delete-requested(id); }
+            delete-folder-requested(path) => { root.delete-folder-requested(path); }
             note-moved(id, folder) => { root.note-moved(id, folder); }
             search-changed(q) => { root.search-changed(q); }
             vault-change-requested() => { root.browse-vault-requested(); }
             rename-requested(id, new-title) => { root.rename-requested(id, new-title); }
+            rename-folder-requested(path, new-name) => { root.rename-folder-requested(path, new-name); }
         }
 
         // Main content column
