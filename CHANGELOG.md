@@ -29,12 +29,30 @@ All notable changes to Rustidian are documented here.
   it there, or onto empty space to send it back to the vault root. Open tabs
   and the active note follow the new path automatically; collisions are
   reported instead of overwriting.
+- **Folder management**: `vault::create_folder` / `rename_folder` /
+  `delete_folder`, a "+ New folder" button, inline rename (right-click) and
+  delete with confirmation. `list_notes_tree` now includes empty folders.
+  Renaming or deleting a folder remaps/drops the tabs and the active note that
+  lived inside it.
+- **Session restore**: `Config` gained `open_tabs` and `active_note`; open tabs
+  and the active note come back on the next launch (missing files are dropped).
+- **Flush on close**: pending edits are written synchronously when the window is
+  closed, even if the autosave debounce hasn't fired.
+- **Wikilink navigation**: `[[Note]]` / `[[Note|alias]]` become `rustidian://`
+  links in the preview; clicking one opens the target note (resolved by path or
+  title, case-insensitively). External links open in the default browser.
 
 ### Changed
 
 - The preview no longer uses `pulldown_cmark::html::push_html()`.
 - The vault picker no longer requires typing a path.
 - `Config` gained a `dark_mode` field (defaults to `true` for existing configs).
+
+### Performance
+
+- Saving now re-indexes only the edited note (`links::update_note`) instead of
+  rescanning the whole vault, and the preview is debounced (80 ms) instead of
+  re-parsing the Markdown on every keystroke.
 
 ## [0.1.0]
 

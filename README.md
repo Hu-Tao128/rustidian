@@ -9,13 +9,15 @@ Plain `.md` files in a plain folder — no database, no proprietary format.
 ## Features
 
 - **Create, edit, rename and delete** Markdown notes
-- **Subfolders** — the vault is scanned recursively and the sidebar shows an expandable folder tree
+- **Subfolders** — the vault is scanned recursively and the sidebar shows an expandable folder tree; create, rename (right-click) and delete folders, including empty ones
 - **Move notes by drag & drop** — drag a note onto a folder to move it there, or onto empty space to send it back to the vault root
 - **Live preview** rendered from a real block model (headings, paragraphs, lists, task lists, code blocks, nested quotes, tables and horizontal rules) with native bold/italic/strikethrough/inline-code/links via Slint's `StyledText`
 - **Autosave** with a 600 ms debounce — writes to disk only after you pause typing
 - **Full-text search** across titles and note contents with a 150 ms debounce
-- **Wikilinks** — `[[Note name]]` and `[[Note|alias]]` syntax
+- **Wikilinks** — `[[Note name]]` and `[[Note|alias]]` syntax; click one in the preview to open the target note (resolved by path or title)
 - **Backlinks** — each note shows which other notes link to it
+- **Session restore** — open tabs and the active note come back on the next launch
+- **Safe exit** — pending edits are flushed when you close the window, even if the autosave debounce hasn't fired yet
 - **Markdown editing assistance**
   - Auto-continue lists (`- item`, `1. item`, `- [ ] task`) on Enter; pressing Enter on an empty item leaves the list
   - Auto-closing pairs for `**`, `_`, `` ` `` and `[[`, wrapping the current selection when there is one
@@ -23,7 +25,8 @@ Plain `.md` files in a plain folder — no database, no proprietary format.
 - **Catppuccin themes** — Mocha (dark) and Latte (light), toggled from the toolbar or with `Ctrl+T`, persisted in the config file
 - **Native folder picker** — choosing or changing the vault opens the system file explorer instead of typing a path
 - **Keyboard shortcuts** — `Ctrl+S` save, `Ctrl+N` new note, `Ctrl+P` cycle view, `Ctrl+T` toggle theme
-- **Persistent config** — vault path and theme saved to `~/.config/rustidian/config.toml`
+- **Persistent config** — vault path, theme and open tabs saved to `~/.config/rustidian/config.toml`
+- **Incremental link indexing** — saving re-indexes only the edited note and the preview is debounced, instead of rescanning the vault on every keystroke
 - **Optional graph view** — force-directed layout behind a Cargo feature flag; the default binary never compiles or loads `petgraph`
 
 ---
@@ -268,7 +271,7 @@ Use `vault-ejemplo/` for development — never point a dev build at your real no
 
 ## Known limitations (v1)
 
-- **Renaming or moving a note breaks existing `[[links]]`** — same behaviour as Obsidian without the "update links on rename" plugin. Tracked as a future improvement (stable IDs via YAML frontmatter).
+- **Renaming or moving a note — or renaming/deleting a folder that contains notes — breaks existing `[[links]]`** — same behaviour as Obsidian without the "update links on rename" plugin. Tracked as a future improvement (stable IDs via YAML frontmatter).
 - **Dropping a note onto a folder where a note with the same name already exists is rejected** — Rustidian shows an error instead of overwriting.
 - **Images in the preview are shown as labelled links** — Slint's `StyledText` has no inline image support, so `![alt](url)` renders as a clickable `🖼 alt` link.
 - **The graph view is opt-in** — build with `--features graph` on machines that can afford the layout calculation.
@@ -287,6 +290,7 @@ Use `vault-ejemplo/` for development — never point a dev build at your real no
 | V5 — graph view (`--features graph`) | 🔧 scaffolded, layout implemented |
 | V6 — subfolders, block preview, editing assistance, themes | ✅ done |
 | V7 — drag-and-drop note moving | ✅ done |
+| V8 — folder management, session restore, wikilink navigation, incremental indexing | ✅ done |
 
 ---
 

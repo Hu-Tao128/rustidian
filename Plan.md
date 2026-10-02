@@ -448,3 +448,57 @@ nativo con `rfd` (backend GTK3), en vez de pedir una URL escrita.
 - **Limitación heredada de v1:** mover una nota cambia su `NoteId`, así que los
   `[[enlaces]]` que apuntaban a ella quedan rotos — el mismo comportamiento que
   al renombrar (IDs estables vía frontmatter siguen siendo trabajo futuro).
+
+---
+
+## 14. Actualización V8 — carpetas, sesión, navegación y rendimiento
+
+Esta sección documenta la tercera iteración. No invalida los principios de las
+secciones 1–13: siguen vigentes.
+
+### 14.1 Gestión de carpetas
+
+- El core gana `vault::create_folder`, `vault::rename_folder` y
+  `vault::delete_folder`, con validación de nombres (segmento único, sin `/`,
+  `..` ni `.`) y `CoreError::InvalidName` para los inválidos.
+- `list_notes_tree` ahora recorre **también los directorios**, no solo los
+  `.md`, así que las carpetas vacías aparecen en el sidebar.
+- En el sidebar: botón "+ New folder", renombrar con clic derecho (LineEdit
+  inline) y eliminar con confirmación. Al renombrar se reasignan
+  `expanded`/`selected_folder` y se remapean los ids de las pestañas y de la
+  nota activa que estaban dentro; al eliminar se descartan.
+
+### 14.2 Guardar al cerrar y restaurar sesión
+
+- `Window.on_close_requested` vuelca la nota activa a disco antes de cerrar
+  (el autoguardado es un debounce de 600 ms y podía perderse lo último).
+- `config.toml` guarda `open_tabs` y `active_note` (con `serde(default)` para
+  configs antiguas). Al arrancar se restauran las pestañas cuyos archivos
+  siguen existiendo y se reabre la nota activa; cambiar de vault empieza sesión
+  limpia.
+
+### 14.3 Navegación por wikilinks
+
+- `markdown::parse_blocks` post-procesa el árbol `Block`/`Inline`: fusiona
+  spans de texto contiguos y convierte `[[Nota]]` / `[[Nota|alias]]` en
+  `Inline::Link` con URL `rustidian://<destino percent-encoded>`.
+- `StyledText.link-clicked` reenvía los wikilinks a Rust (global `Links`), que
+  resuelve el destino por ruta o por título (sin distinguir mayúsculas) y abre
+  la nota; el resto de URLs se abren con `Platform.open-url`.
+- El contenido dentro de `Inline::Code` no se toca (no se recurre en él).
+
+### 14.4 Rendimiento
+
+- `links::update_note` actualiza el índice de una sola nota: quita sus enlaces
+  salientes antiguos (y los backlinks que aportaban) y relee solo ese archivo.
+  Se usa en el autoguardado, en `Ctrl+S` y al cambiar de nota; el resto de
+  operaciones (crear/borrar/renombrar/mover) siguen reconstruyendo completo.
+- El preview tiene un debounce de 80 ms (timer propio) en vez de reparsear en
+  cada pulsación; si el usuario cambió de nota, el render pendiente se descarta.
+
+### 14.5 Reglas que se mantienen
+
+- `rustidian-core` sigue sin importar `slint`.
+- La UI no llama `std::fs` directamente.
+- `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
+  y `cargo test --workspace` deben pasar limpios.
