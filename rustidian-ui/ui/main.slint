@@ -1,11 +1,11 @@
 import { VerticalBox, HorizontalBox, Button } from "std-widgets.slint";
-import { NoteItem, BacklinkItem, TabItem, TreeRow, BlockItem, EditResult } from "types.slint";
+import { NoteItem, BacklinkItem, TabItem, TreeRow, BlockItem, EditResult, Dnd } from "types.slint";
 import { Palette } from "theme.slint";
 import { Sidebar } from "sidebar.slint";
 import { Editor } from "editor.slint";
 import { Preview } from "preview.slint";
 
-export { NoteItem, BacklinkItem, TabItem, TreeRow, BlockItem, EditResult, Palette }
+export { NoteItem, BacklinkItem, TabItem, TreeRow, BlockItem, EditResult, Palette, Dnd }
 
 export enum StatusKind { info, success, error }
 
@@ -67,6 +67,8 @@ export component AppWindow inherits Window {
     callback new-note-requested();
     callback rename-requested(string, string);
     callback delete-requested(string);
+    // note-moved(note-id, target-folder) — a note was dropped onto a folder
+    callback note-moved(string, string);
     callback search-changed(string);
     callback vault-open-requested(string);
     callback browse-vault-requested();
@@ -150,6 +152,7 @@ export component AppWindow inherits Window {
             folder-toggled(path) => { root.folder-toggled(path); }
             new-note-requested() => { root.new-note-requested(); }
             delete-requested(id) => { root.delete-requested(id); }
+            note-moved(id, folder) => { root.note-moved(id, folder); }
             search-changed(q) => { root.search-changed(q); }
             vault-change-requested() => { root.browse-vault-requested(); }
             rename-requested(id, new-title) => { root.rename-requested(id, new-title); }

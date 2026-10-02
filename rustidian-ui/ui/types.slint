@@ -44,6 +44,19 @@ export struct TreeRow {
     is-selected-folder: bool,
 }
 
+// ── Drag & drop ──────────────────────────────────────────────────────────────
+
+// Dragging a note carries its id as a `data-transfer` (plain text).  Data
+// transfers are opaque to Slint, so the conversions are implemented in Rust.
+export global Dnd {
+    // Build the payload for a note drag from its id.
+    pure callback note-transfer(string) -> data-transfer;
+    // Read back the note id from a payload ("" when it carries none).
+    pure callback transfer-note(data-transfer) -> string;
+    // Whether a payload looks like a note id (used for drop highlighting).
+    pure callback can-drop-note(data-transfer) -> bool;
+}
+
 // ── Markdown preview ─────────────────────────────────────────────────────────
 
 export enum BlockKind {

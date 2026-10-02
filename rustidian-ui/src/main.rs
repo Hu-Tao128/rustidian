@@ -30,6 +30,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_dark_mode(dark);
     apply_theme(&ui, dark);
 
+    // ── Drag & drop payload helpers ───────────────────────────────────────────
+    //
+    // Slint's `DragArea`/`DropArea` carry an opaque `data-transfer`.  A note
+    // drag is encoded as the note id in plain text; these callbacks build and
+    // read that payload.
+    {
+        let dnd = ui.global::<Dnd>();
+        dnd.on_note_transfer(slint::DataTransfer::from);
+        dnd.on_transfer_note(|data| data.plain_text().unwrap_or_default());
+        dnd.on_can_drop_note(|data| {
+            data.plain_text()
+                .map(|text| text.ends_with(".md"))
+                .unwrap_or(false)
+        });
+    }
+
     // ── Decide whether to show the vault picker ───────────────────────────────
     //
     // Priority:
@@ -379,6 +395,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.set_status_kind(StatusKind::Error);
                         ui.set_status_message(format!("Rename error: {e}").into());
+                    }
+                }
+            }
+        });
+    }
+
+    // ── note-moved (drag & drop onto a folder) ────────────────────────────────
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_note_moved(move |id, folder| {
+            let id_str = id.to_string();
+            let folder_str = folder.to_string();
+            let vault = {
+                let data = shared2.lock().unwrap();
+                data.vault_path.clone()
+            };
+            if vault.as_os_str().is_empty() {
+                return;
+            }
+            match vault::move_note(&vault, &id_str, &folder_str) {
+                Ok(new_id) => {
+                    let ui = match ui_weak.upgrade() {
+                        Some(u) => u,
+                        None => return,
+                    };
+                    if new_id == id_str {
+                        ui.set_status_kind(StatusKind::Info);
+                        ui.set_status_message("Note is already in that folder.".into());
+                        return;
+                    }
+                    // The note id encodes its path, so moving changes it: keep
+                    // the active note and any open tab pointing at the new path.
+                    if ui.get_current_note_id().as_str() == id_str {
+                        ui.set_current_note_id(new_id.clone().into());
+                    }
+                    move_tab(&ui, &id_str, &new_id);
+                    if let Ok(mut data) = shared2.lock() {
+                        data.selected_folder = folder_str.clone();
+                    }
+                    let destination = if folder_str.trim().is_empty() {
+                        "vault root".to_owned()
+                    } else {
+                        folder_str.clone()
+                    };
+                    ui.set_status_kind(StatusKind::Success);
+                    ui.set_status_message(format!("Moved to {destination}").into());
+                    let refresh = make_refresh(ui_weak.clone(), Arc::clone(&shared2));
+                    worker::rebuild_index(vault, Arc::clone(&shared2), refresh);
+                }
+                Err(e) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_status_kind(StatusKind::Error);
+                        ui.set_status_message(format!("Move error: {e}").into());
                     }
                 }
             }
@@ -759,6 +829,27 @@ fn mark_tab_unsaved(ui: &AppWindow, id: &str, unsaved: bool) {
                     id: t.id,
                     title: t.title,
                     unsaved,
+                }
+            } else {
+                t
+            }
+        })
+        .collect();
+    ui.set_open_tabs(ModelRc::new(VecModel::from(tabs)));
+}
+
+/// Update a tab's id after its note was moved (the title is unchanged).
+fn move_tab(ui: &AppWindow, old_id: &str, new_id: &str) {
+    let tabs_model = ui.get_open_tabs();
+    let count = tabs_model.row_count();
+    let tabs: Vec<TabItem> = (0..count)
+        .filter_map(|i| tabs_model.row_data(i))
+        .map(|t| {
+            if t.id.as_str() == old_id {
+                TabItem {
+                    id: new_id.into(),
+                    title: t.title,
+                    unsaved: t.unsaved,
                 }
             } else {
                 t

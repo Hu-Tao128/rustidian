@@ -10,6 +10,7 @@ Plain `.md` files in a plain folder — no database, no proprietary format.
 
 - **Create, edit, rename and delete** Markdown notes
 - **Subfolders** — the vault is scanned recursively and the sidebar shows an expandable folder tree
+- **Move notes by drag & drop** — drag a note onto a folder to move it there, or onto empty space to send it back to the vault root
 - **Live preview** rendered from a real block model (headings, paragraphs, lists, task lists, code blocks, nested quotes, tables and horizontal rules) with native bold/italic/strikethrough/inline-code/links via Slint's `StyledText`
 - **Autosave** with a 600 ms debounce — writes to disk only after you pause typing
 - **Full-text search** across titles and note contents with a 150 ms debounce
@@ -267,9 +268,9 @@ Use `vault-ejemplo/` for development — never point a dev build at your real no
 
 ## Known limitations (v1)
 
-- **Renaming a note breaks existing `[[links]]`** — same behaviour as Obsidian without the "update links on rename" plugin. Tracked as a future improvement (stable IDs via YAML frontmatter).
+- **Renaming or moving a note breaks existing `[[links]]`** — same behaviour as Obsidian without the "update links on rename" plugin. Tracked as a future improvement (stable IDs via YAML frontmatter).
+- **Dropping a note onto a folder where a note with the same name already exists is rejected** — Rustidian shows an error instead of overwriting.
 - **Images in the preview are shown as labelled links** — Slint's `StyledText` has no inline image support, so `![alt](url)` renders as a clickable `🖼 alt` link.
-- **No drag-and-drop to move notes** — planned as a future improvement.
 - **The graph view is opt-in** — build with `--features graph` on machines that can afford the layout calculation.
 
 ---
@@ -285,7 +286,7 @@ Use `vault-ejemplo/` for development — never point a dev build at your real no
 | V4 — UX polish (shortcuts, indicators, first-run) | ✅ done |
 | V5 — graph view (`--features graph`) | 🔧 scaffolded, layout implemented |
 | V6 — subfolders, block preview, editing assistance, themes | ✅ done |
-| V7 — drag-and-drop note moving | 📋 planned |
+| V7 — drag-and-drop note moving | ✅ done |
 
 ---
 

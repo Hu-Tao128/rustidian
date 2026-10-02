@@ -354,7 +354,9 @@ principios de las secciones 1–12: siguen vigentes.
 - En la UI, el sidebar es un árbol expandible/colapsable. El estado de
   expansión vive en `AppData::expanded` (no está hardcodeado) y la carpeta
   seleccionada en `AppData::selected_folder`; las notas nuevas se crean ahí.
-- **Pendiente (mejora futura):** arrastrar y soltar para mover notas.
+- **Mover notas con arrastrar y soltar:** se arrastra una nota del sidebar y se
+  suelta sobre una carpeta para moverla ahí, o sobre el espacio vacío para
+  devolverla a la raíz del vault. Ver 13.7.
 
 ### 13.2 Preview de Markdown por bloques
 
@@ -422,3 +424,27 @@ nativo con `rfd` (backend GTK3), en vez de pedir una URL escrita.
   nativos en `std` y Slint no la incluye.
 - `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
   y `cargo test --workspace` deben pasar limpios.
+
+### 13.7 Mover notas con arrastrar y soltar (V7)
+
+- **Core:** `vault::move_note(vault, id, target_folder) -> Result<NoteId, CoreError>`
+  conserva el nombre del archivo, crea las carpetas intermedias y devuelve el
+  nuevo `NoteId`. Es idempotente si la nota ya está en esa carpeta y falla con
+  `CoreError::NameCollision` si ya existe una nota con el mismo nombre en el
+  destino. Valida `id` y `target_folder` para que sean rutas relativas sin `..`
+  ni rutas absolutas: un arrastre externo no puede mover archivos fuera del
+  vault.
+- **UI:** se usan los elementos nativos `DragArea` (fila de nota) y `DropArea`
+  (filas de carpeta y un `DropArea` ancestro que cubre la lista) de Slint, con
+  `DataTransfer` como carga útil. El id de la nota viaja como texto plano; los
+  callbacks del global `Dnd` (`note-transfer`, `transfer-note`,
+  `can-drop-note`) construyen y leen el payload desde Rust.
+- Soltar sobre una carpeta mueve la nota a esa carpeta; soltar sobre el espacio
+  vacío la devuelve a la raíz. La carpeta destino se resalta con un borde de
+  acento y la fila origen se atenúa mientras se arrastra.
+- Al mover la nota activa o una pestaña abierta, el `current-note-id` y el id de
+  la pestaña se actualizan antes de reindexar, de modo que el guardado
+  automático escribe en la ruta nueva.
+- **Limitación heredada de v1:** mover una nota cambia su `NoteId`, así que los
+  `[[enlaces]]` que apuntaban a ella quedan rotos — el mismo comportamiento que
+  al renombrar (IDs estables vía frontmatter siguen siendo trabajo futuro).

@@ -24,6 +24,11 @@ All notable changes to Rustidian are documented here.
   toolbar button or `Ctrl+T` and persisted in `config.toml`.
 - Native folder picker using `rfd` (GTK3 backend) for choosing the vault.
 - `vault-ejemplo/00 Markdown prueba.md`, an exhaustive Markdown test note.
+- **Drag & drop to move notes**: `vault::move_note` in the core plus native
+  Slint `DragArea`/`DropArea` in the sidebar. Drop a note onto a folder to move
+  it there, or onto empty space to send it back to the vault root. Open tabs
+  and the active note follow the new path automatically; collisions are
+  reported instead of overwriting.
 
 ### Changed
 

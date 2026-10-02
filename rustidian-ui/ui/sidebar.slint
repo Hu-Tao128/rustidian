@@ -1,5 +1,5 @@
 import { VerticalBox, HorizontalBox, Button, LineEdit, ListView } from "std-widgets.slint";
-import { NoteItem, BacklinkItem, TreeRow, TreeRowKind } from "types.slint";
+import { NoteItem, BacklinkItem, TreeRow, TreeRowKind, Dnd } from "types.slint";
 import { Palette } from "theme.slint";
 
 export component Sidebar inherits Rectangle {
@@ -20,6 +20,7 @@ export component Sidebar inherits Rectangle {
     callback search-changed(string);
     callback vault-change-requested();
     callback rename-requested(string, string);   // (id, new-title)
+    callback note-moved(string, string);         // (id, target-folder)
 
     // Which list to show: tree or search results
     property <bool> searching: search-box.text != "";
@@ -80,14 +81,26 @@ export component Sidebar inherits Rectangle {
         }
 
         // ── Section label ─────────────────────────────────────────────────────
-        Text {
-            text: root.searching ? "SEARCH RESULTS" : "NOTES";
-            color: Palette.text-muted;
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0.8px;
+        HorizontalBox {
             height: 20px;
-            vertical-alignment: center;
+            alignment: space-between;
+
+            Text {
+                text: root.searching ? "SEARCH RESULTS" : "NOTES";
+                color: Palette.text-muted;
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.8px;
+                vertical-alignment: center;
+            }
+
+            if !root.searching && root.note-count > 0: Text {
+                text: "drag to move";
+                color: Palette.text-muted;
+                font-size: 9px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+            }
         }
 
         // ── Empty states ──────────────────────────────────────────────────────
@@ -119,10 +132,31 @@ export component Sidebar inherits Rectangle {
         }
 
         // ── Tree / search list ────────────────────────────────────────────────
-        if !root.searching: ListView {
+        if !root.searching: Rectangle {
             vertical-stretch: 1;
+            background: transparent;
+            border-width: root-drop.has-drag ? 1px : 0px;
+            border-color: Palette.accent;
+            border-radius: 4px;
 
-            for row in root.tree: Rectangle {
+            // Dropping anywhere that is not a folder row moves the note to the
+            // vault root.  Folder rows have their own (deeper) DropArea, which
+            // takes precedence over this ancestor one.
+            root-drop := DropArea {
+                width: parent.width;
+                height: parent.height;
+                can-drop(event) => {
+                    Dnd.can-drop-note(event.data) ? DragAction.move : DragAction.none
+                }
+                dropped(event) => {
+                    root.note-moved(Dnd.transfer-note(event.data), "");
+                    return DragAction.move;
+                }
+
+                ListView {
+                    width: parent.width;
+                    height: parent.height;
+                    for row in root.tree: Rectangle {
                 height: row.kind == TreeRowKind.note && row.id == root.pending-delete-id ? 56px
                       : row.kind == TreeRowKind.note && row.id == root.renaming-id      ? 40px
                       : row.kind == TreeRowKind.folder                                  ? 26px
@@ -136,41 +170,56 @@ export component Sidebar inherits Rectangle {
                             : transparent));
                 border-radius: 4px;
 
-                // ── Folder row ────────────────────────────────────────────────
+                // ── Folder row (drop target) ──────────────────────────────────
                 if row.kind == TreeRowKind.folder: Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    background: transparent;
+                    background: folder-drop.has-drag ? Palette.card : transparent;
+                    border-width: folder-drop.has-drag ? 1px : 0px;
+                    border-color: Palette.accent;
+                    border-radius: 4px;
 
-                    folder-touch := TouchArea {
+                    folder-drop := DropArea {
                         width: parent.width;
                         height: parent.height;
-                        mouse-cursor: pointer;
-                        clicked => { root.folder-toggled(row.id); }
-                    }
-
-                    HorizontalBox {
-                        padding-left: 8px + row.depth * 14px;
-                        padding-right: 6px;
-                        spacing: 4px;
-                        alignment: start;
-
-                        Text {
-                            text: row.expanded ? "▾" : "▸";
-                            color: Palette.text-muted;
-                            font-size: 11px;
-                            vertical-alignment: center;
-                            width: 12px;
+                        can-drop(event) => {
+                            Dnd.can-drop-note(event.data) ? DragAction.move : DragAction.none
+                        }
+                        dropped(event) => {
+                            root.note-moved(Dnd.transfer-note(event.data), row.id);
+                            return DragAction.move;
                         }
 
-                        Text {
-                            text: "📁 " + row.name;
-                            color: row.is-selected-folder ? Palette.text : Palette.text;
-                            font-size: 13px;
-                            font-weight: row.is-selected-folder ? 600 : 500;
-                            vertical-alignment: center;
-                            overflow: elide;
-                            horizontal-stretch: 1;
+                        folder-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { root.folder-toggled(row.id); }
+                        }
+
+                        HorizontalBox {
+                            padding-left: 8px + row.depth * 14px;
+                            padding-right: 6px;
+                            spacing: 4px;
+                            alignment: start;
+
+                            Text {
+                                text: row.expanded ? "▾" : "▸";
+                                color: Palette.text-muted;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                width: 12px;
+                            }
+
+                            Text {
+                                text: "📁 " + row.name;
+                                color: Palette.text;
+                                font-size: 13px;
+                                font-weight: row.is-selected-folder ? 600 : 500;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
                         }
                     }
                 }
@@ -253,66 +302,79 @@ export component Sidebar inherits Rectangle {
                     }
                 }
 
-                // ── Note: normal row ──────────────────────────────────────────
+                // ── Note: normal row (drag source) ────────────────────────────
                 if row.kind == TreeRowKind.note && row.id != root.pending-delete-id && row.id != root.renaming-id: Rectangle {
                     width: parent.width;
                     height: parent.height;
                     background: transparent;
 
-                    row-touch := TouchArea {
+                    drag-area := DragArea {
                         width: parent.width;
                         height: parent.height;
-                        mouse-cursor: pointer;
-                        clicked => { root.note-selected(row.id); }
-                        pointer-event(ev) => {
-                            if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
-                                root.renaming-id = row.id;
-                                root.pending-delete-id = "";
-                            }
-                        }
-                    }
+                        data: Dnd.note-transfer(row.id);
+                        allow-move: true;
+                        allow-copy: false;
+                        allow-link: false;
+                        // Dim the row while it is being dragged.
+                        opacity: self.dragging ? 0.4 : 1.0;
 
-                    HorizontalBox {
-                        padding-left: 8px + row.depth * 14px;
-                        padding-right: 4px;
-                        alignment: space-between;
-
-                        Text {
-                            text: row.name;
-                            color: row.id == root.current-note-id ? Palette.text : Palette.text;
-                            font-size: 13px;
-                            vertical-alignment: center;
-                            overflow: elide;
-                            horizontal-stretch: 1;
-                        }
-
-                        del-touch := TouchArea {
-                            width: 26px;
-                            height: 26px;
+                        row-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
                             mouse-cursor: pointer;
-                            clicked => {
-                                root.pending-delete-id = row.id;
-                                root.renaming-id = "";
+                            clicked => { root.note-selected(row.id); }
+                            pointer-event(ev) => {
+                                if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
+                                    root.renaming-id = row.id;
+                                    root.pending-delete-id = "";
+                                }
+                            }
+                        }
+
+                        HorizontalBox {
+                            padding-left: 8px + row.depth * 14px;
+                            padding-right: 4px;
+                            alignment: space-between;
+
+                            Text {
+                                text: row.name;
+                                color: Palette.text;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
                             }
 
-                            Rectangle {
-                                background: del-touch.has-hover ? Palette.card : transparent;
-                                border-radius: 4px;
-                                width: parent.width;
-                                height: parent.height;
+                            del-touch := TouchArea {
+                                width: 26px;
+                                height: 26px;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.pending-delete-id = row.id;
+                                    root.renaming-id = "";
+                                }
 
-                                Text {
-                                    text: "✕";
-                                    color: del-touch.has-hover ? Palette.danger : Palette.text-muted;
-                                    font-size: 12px;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
+                                Rectangle {
+                                    background: del-touch.has-hover ? Palette.card : transparent;
+                                    border-radius: 4px;
                                     width: parent.width;
                                     height: parent.height;
+
+                                    Text {
+                                        text: "✕";
+                                        color: del-touch.has-hover ? Palette.danger : Palette.text-muted;
+                                        font-size: 12px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
                 }
             }
         }

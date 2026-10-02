@@ -233,6 +233,64 @@ pub fn rename_note(vault: &Path, id: &str, new_title: &str) -> Result<NoteId, Co
     Ok(relative_id(vault, &new_path))
 }
 
+/// Move an existing note into *target_folder* (relative to the vault root, `""`
+/// or `"/"` for the root itself), keeping its file name.
+///
+/// Missing intermediate folders are created.  Moving a note into the folder it
+/// already lives in is a no-op that returns the unchanged [`NoteId`].  Fails
+/// with [`CoreError::NameCollision`] if the target folder already contains a
+/// note with the same name.
+///
+/// *id* and *target_folder* are validated to stay inside the vault: absolute
+/// paths and `..` segments are rejected (external drag-and-drop payloads must
+/// not be able to move arbitrary files).
+pub fn move_note(vault: &Path, id: &str, target_folder: &str) -> Result<NoteId, CoreError> {
+    if !is_safe_relative(id) || !id.ends_with(".md") {
+        return Err(CoreError::NotFound(id.to_owned()));
+    }
+    let old_path = absolute_path(vault, id);
+    if !old_path.is_file() {
+        return Err(CoreError::NotFound(id.to_owned()));
+    }
+
+    let target_folder = target_folder.trim().trim_matches('/');
+    if !is_safe_relative(target_folder) {
+        return Err(CoreError::NotFound(target_folder.to_owned()));
+    }
+
+    let dir = if target_folder.is_empty() {
+        vault.to_path_buf()
+    } else {
+        vault.join(target_folder)
+    };
+    let file_name = old_path
+        .file_name()
+        .ok_or_else(|| CoreError::NotFound(id.to_owned()))?;
+    let new_path = dir.join(file_name);
+
+    let old_rel = relative_id(vault, &old_path);
+    let new_rel = relative_id(vault, &new_path);
+    if new_rel == old_rel {
+        return Ok(new_rel); // Already there — nothing to do.
+    }
+    if new_path.exists() {
+        return Err(CoreError::NameCollision(new_rel));
+    }
+    std::fs::create_dir_all(&dir)?;
+    std::fs::rename(&old_path, &new_path)?;
+    Ok(new_rel)
+}
+
+/// Whether *path* is a relative path made only of normal components.
+///
+/// Used to keep [`move_note`] inside the vault: an empty string is accepted
+/// (vault root), but absolute paths and `..` are not.
+fn is_safe_relative(path: &str) -> bool {
+    use std::path::Component;
+    let path = Path::new(path);
+    !path.is_absolute() && path.components().all(|c| matches!(c, Component::Normal(_)))
+}
+
 /// Permanently delete a note.
 pub fn delete_note(vault: &Path, id: &str) -> Result<(), CoreError> {
     let path = absolute_path(vault, id);
@@ -395,5 +453,69 @@ mod tests {
         assert_eq!(new_id, "Folder/New.md");
         assert_eq!(read_note(vault, &new_id).unwrap().content, "content");
         assert!(read_note(vault, &id).is_err());
+    }
+
+    #[test]
+    fn move_note_into_new_folder() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        let id = create_note(vault, "Note").unwrap();
+        write_note(vault, &id, "content").unwrap();
+
+        let new_id = move_note(vault, &id, "Proyectos/2024").unwrap();
+        assert_eq!(new_id, "Proyectos/2024/Note.md");
+        assert_eq!(read_note(vault, &new_id).unwrap().content, "content");
+        assert!(read_note(vault, &id).is_err());
+    }
+
+    #[test]
+    fn move_note_back_to_root() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        let id = create_note_in(vault, "Folder", "Note").unwrap();
+
+        let new_id = move_note(vault, &id, "").unwrap();
+        assert_eq!(new_id, "Note.md");
+        assert!(vault.join("Note.md").exists());
+    }
+
+    #[test]
+    fn move_note_to_same_folder_is_noop() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        let id = create_note_in(vault, "Folder", "Note").unwrap();
+
+        let same = move_note(vault, &id, "Folder").unwrap();
+        assert_eq!(same, id);
+        assert!(vault.join("Folder/Note.md").exists());
+    }
+
+    #[test]
+    fn move_note_collision_returns_error() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        let id = create_note(vault, "Same").unwrap();
+        create_note_in(vault, "Folder", "Same").unwrap();
+
+        let err = move_note(vault, &id, "Folder").unwrap_err();
+        assert!(matches!(err, CoreError::NameCollision(_)));
+        // The original file must not have been touched.
+        assert!(vault.join("Same.md").exists());
+    }
+
+    #[test]
+    fn move_nonexistent_returns_error() {
+        let dir = tempdir().unwrap();
+        let err = move_note(dir.path(), "ghost.md", "Folder").unwrap_err();
+        assert!(matches!(err, CoreError::NotFound(_)));
+    }
+
+    #[test]
+    fn move_note_rejects_path_traversal() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        // A crafted id must not escape the vault.
+        let err = move_note(vault, "../outside.md", "Folder").unwrap_err();
+        assert!(matches!(err, CoreError::NotFound(_)));
     }
 }
