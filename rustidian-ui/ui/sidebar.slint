@@ -80,6 +80,7 @@ export component Sidebar inherits Rectangle {
         // ── Header ────────────────────────────────────────────────────────────
         HorizontalBox {
             alignment: space-between;
+            spacing: 6px;
             height: 32px;
 
             Text {
@@ -108,6 +109,16 @@ export component Sidebar inherits Rectangle {
                 vertical-alignment: center;
                 horizontal-alignment: right;
                 overflow: elide;
+            }
+
+            // Collapse the sidebar to its icon rail.  It lives inside the
+            // sidebar header (and the rail has the matching expand button).
+            IconButton {
+                icon: @image-url("icons/panel-left.svg");
+                tip: "Collapse sidebar";
+                width: 24px;
+                height: 24px;
+                clicked => { root.toggle-sidebar-requested(); }
             }
         }
 

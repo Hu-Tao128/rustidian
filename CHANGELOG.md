@@ -69,8 +69,9 @@ All notable changes to Rustidian are documented here.
 - **Icons are now SVG** (`ui/icons/`) tinted from the palette, so the sidebar
   buttons and the light/dark theme switch stay clearly visible in both themes
   instead of relying on font glyph coverage.
-- The sidebar toggle now lives in the main toolbar (always reachable) instead of
-  the sidebar header, where it overflowed.
+- The sidebar toggle lives in the sidebar header (and the collapsed rail has the
+  matching expand button); the header is laid out so the title shrinks instead
+  of pushing the button out.
 - The four file-explorer buttons are centered horizontally and the section label
   is clearer (the "drag to move" hint was removed).
 - The sidebar search field is now a palette-driven input (`ui/text_field.slint`)

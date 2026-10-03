@@ -4,7 +4,6 @@ import { Palette } from "theme.slint";
 import { Sidebar } from "sidebar.slint";
 import { Editor } from "editor.slint";
 import { Preview } from "preview.slint";
-import { IconButton } from "icon_button.slint";
 import { TextField } from "text_field.slint";
 import { PaletteButton } from "palette_button.slint";
 
@@ -365,16 +364,6 @@ export component AppWindow inherits Window {
                         spacing: 8px;
                         alignment: start;
                         horizontal-stretch: 1;
-
-                        // Sidebar show/hide — kept in the main toolbar so it is
-                        // reachable whether the sidebar is open or collapsed.
-                        IconButton {
-                            icon: @image-url("icons/panel-left.svg");
-                            tip: root.sidebar-collapsed ? "Show sidebar" : "Hide sidebar";
-                            width: 28px;
-                            height: 28px;
-                            clicked => { root.toggle-sidebar-requested(); }
-                        }
 
                         if root.current-note-id != "": Text {
                             text: root.current-note-title != "" ? root.current-note-title : root.current-note-id;
