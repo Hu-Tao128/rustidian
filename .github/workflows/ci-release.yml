@@ -1,0 +1,189 @@
+# Builds the platforms that cannot be produced on a Linux host (macOS and
+# Windows) and uploads them to a GitHub Release. Dispatched on demand by
+# scripts/build-release.sh.
+name: Cross-platform Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload to (e.g. v0.1.0)"
+        required: true
+        type: string
+      version:
+        description: "Version string (optional; defaults to Cargo.toml)"
+        required: false
+        type: string
+      graph:
+        description: "Build with the optional graph feature"
+        required: false
+        type: boolean
+        default: false
+      platforms:
+        description: "Comma-separated platforms to build: macos, windows"
+        required: false
+        type: string
+        default: "macos,windows"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── macOS: arm64 (Apple Silicon) + x86_64 (Intel) ──────────────────────────
+  macos:
+    if: ${{ contains(inputs.platforms, 'macos') }}
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            arch: arm64
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          if [[ -z "$VERSION" ]]; then
+            VERSION="$(grep -m1 '^version' rustidian-ui/Cargo.toml | cut -d'"' -f2)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          GRAPH: ${{ inputs.graph }}
+        run: |
+          set -euo pipefail
+          FEATURES=""
+          if [[ "$GRAPH" == "true" ]]; then FEATURES="--features graph"; fi
+          cargo build --release -p rustidian-ui --target "${{ matrix.target }}" $FEATURES
+
+      - name: Package (.app, .dmg, .tar.gz)
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          BIN="target/${{ matrix.target }}/release/rustidian-ui"
+          APP="Rustidian.app"
+
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp "$BIN" "$APP/Contents/MacOS/rustidian-ui"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>Rustidian</string>
+              <key>CFBundleDisplayName</key><string>Rustidian</string>
+              <key>CFBundleIdentifier</key><string>com.github.hu-tao128.rustidian</string>
+              <key>CFBundleVersion</key><string>${VERSION}</string>
+              <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+              <key>CFBundleExecutable</key><string>rustidian-ui</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>LSMinimumSystemVersion</key><string>10.15</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          tar -czf "rustidian-ui-${VERSION}-macos-${ARCH}.tar.gz" "$APP"
+          hdiutil create -volname "Rustidian ${VERSION}" -srcfolder "$APP" \
+            -ov -format UDZO "rustidian-ui-${VERSION}-macos-${ARCH}.dmg"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            rustidian-ui-*-macos-*.tar.gz
+            rustidian-ui-*-macos-*.dmg
+
+      - name: Upload to GitHub Release
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "Rustidian $TAG" --generate-notes
+          gh release upload "$TAG" \
+            rustidian-ui-*-macos-*.tar.gz \
+            rustidian-ui-*-macos-*.dmg \
+            --clobber
+
+  # ── Windows x86_64 (MSVC) ──────────────────────────────────────────────────
+  windows:
+    if: ${{ contains(inputs.platforms, 'windows') }}
+    name: Windows x86_64
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          if [[ -z "$VERSION" ]]; then
+            VERSION="$(grep -m1 '^version' rustidian-ui/Cargo.toml | cut -d'"' -f2)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        shell: bash
+        env:
+          GRAPH: ${{ inputs.graph }}
+        run: |
+          set -euo pipefail
+          FEATURES=""
+          if [[ "$GRAPH" == "true" ]]; then FEATURES="--features graph"; fi
+          cargo build --release -p rustidian-ui $FEATURES
+
+      - name: Package (.zip)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path "stage" | Out-Null
+          Copy-Item "target/release/rustidian-ui.exe" "stage/"
+          if (Test-Path "README.md") { Copy-Item "README.md" "stage/" }
+          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   "stage/" }
+          Compress-Archive -Path "stage/*" `
+            -DestinationPath "rustidian-ui-$version-windows-x86_64.zip" -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: rustidian-ui-*-windows-*.zip
+
+      - name: Upload to GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "Rustidian $TAG" --generate-notes
+          gh release upload "$TAG" rustidian-ui-*-windows-*.zip --clobber
