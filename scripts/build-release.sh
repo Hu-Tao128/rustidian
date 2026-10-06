@@ -279,7 +279,7 @@ build_deb() {
     log "Generando paquete .deb…"
     cargo deb -p "$PKG" --no-build ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} --output "$OUT_DIR"
     local f
-    for f in "$OUT_DIR"/*.deb; do [[ -e "$f" ]] && PRODUCED+=("$f"); done
+    for f in "$OUT_DIR"/*"$VERSION"*.deb; do [[ -e "$f" ]] && PRODUCED+=("$f"); done
     return 0
 }
 
@@ -290,11 +290,12 @@ build_rpm() {
     if [[ $GRAPH -eq 1 ]]; then
         warn "cargo-generate-rpm no acepta --features: el .rpm se generará SIN la feature 'graph'"
     fi
-    cargo generate-rpm -p "$PKG" || return 1
     local src="$ROOT/target/generate-rpm"
+    rm -rf "$src"
+    cargo generate-rpm -p "$PKG" || return 1
     local f
     shopt -s nullglob
-    for f in "$src"/*.rpm; do
+    for f in "$src"/*"$VERSION"*.rpm; do
         cp -f "$f" "$OUT_DIR/"
         PRODUCED+=("$OUT_DIR/$(basename "$f")")
     done
@@ -452,7 +453,8 @@ publish() {
     for extra in \
         "$ROOT/install.sh" \
         "$ROOT/rustidian-ui/packaging/rustidian.desktop" \
-        "$ROOT/rustidian-ui/packaging/rustidian.svg"; do
+        "$ROOT/rustidian-ui/packaging/rustidian.svg" \
+        "$ROOT/rustidian-ui/packaging/rustidian-white.svg"; do
         [[ -f "$extra" ]] && files+=("$extra")
     done
 
