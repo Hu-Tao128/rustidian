@@ -13,14 +13,16 @@ Prebuilt binaries are published on the
 
 | Platform | Artifact | Installation |
 | --- | --- | --- |
+| Linux (any distro) | `install.sh` | `curl -fsSL https://raw.githubusercontent.com/Hu-Tao128/rustidian/main/install.sh \| sh` |
 | Debian / Ubuntu | `rustidian_<version>_amd64.deb` | `sudo apt install ./rustidian_<version>_amd64.deb` |
 | Fedora / RHEL | `rustidian-<version>-1.x86_64.rpm` | `sudo dnf install ./rustidian-<version>-1.x86_64.rpm` |
-| Windows x86_64 | `rustidian-<version>-windows-x86_64.zip` | unzip and run `rustidian-ui.exe` |
-| macOS (Apple Silicon / Intel) | `rustidian-<version>-macos-*.dmg` | open the `.dmg` and drag **Rustidian** into *Applications* |
+| Windows x86_64 | `RustidianSetup-<version>-x86_64.exe` | run the installer (or use the `.zip` with `rustidian-ui.exe`) |
+| macOS (Apple Silicon / Intel) | `rustidian-ui-<version>-macos-*.dmg` | open the `.dmg` and drag **Rustidian** into *Applications* |
 
 The installed launcher is `rustidian-ui`, and it also shows up as **Rustidian**
-in your application menu. Prefer to build it yourself? See
-[Building](#building).
+in your application menu. The Linux installer defaults to a per-user install
+(`~/.local`); pass `--system` to install into `/opt` and `/usr/local`. Prefer to
+build it yourself? See [Building](#building).
 
 ---
 
@@ -138,8 +140,8 @@ The binary lands in `target/release/rustidian-ui`.
 ### Release packages
 
 `scripts/build-release.sh` builds and packages the distributables (`.deb`,
-`.rpm`, a Windows `.zip` and macOS `.dmg`/`.tar.gz`) and can publish them to a
-GitHub Release with the `gh` CLI:
+`.rpm`, Linux/macOS `.tar.gz`, a Windows `.zip`, the **Inno Setup** installer and
+a macOS `.dmg`) and can publish them to a GitHub Release with the `gh` CLI:
 
 ```sh
 # Packages only (written to target/distrib/)
@@ -149,9 +151,11 @@ GitHub Release with the `gh` CLI:
 ./scripts/build-release.sh --all
 ```
 
-Run `./scripts/build-release.sh --help` for all options. Windows and macOS
-artifacts are built by the `ci-release.yml` workflow when they cannot be
-produced natively on the local machine.
+Every release also ships the raw per-target binaries, their `.sha256` checksums,
+`install.sh` and the desktop/icon assets — these power the self-updater and the
+Linux installer. Run `./scripts/build-release.sh --help` for all options.
+Windows and macOS artifacts are built by the `ci-release.yml` workflow when they
+cannot be produced natively on the local machine.
 
 ---
 
@@ -168,6 +172,36 @@ RUSTIDIAN_VAULT=/path/to/my/notes ./target/release/rustidian-ui
 On first launch Rustidian asks you to choose a vault folder through the native
 file dialog. The choice is persisted to `~/.config/rustidian/config.toml`, so
 you only need the env var once.
+
+---
+
+## Updating
+
+Rustidian can update itself from GitHub Releases:
+
+```sh
+rustidian-ui --check    # is there a newer version?
+rustidian-ui --update   # download, verify and install it
+```
+
+The same is available from the **Check for updates…** entry in the sidebar.
+Updates are **not** checked on startup by default; set `check_updates = true` in
+`~/.config/rustidian/config.toml` to check automatically and be prompted.
+
+If you installed on Linux with `install.sh`, you can update or uninstall by
+re-running it:
+
+```sh
+# Update to the latest version
+curl -fsSL https://raw.githubusercontent.com/Hu-Tao128/rustidian/main/install.sh | sh -s -- --update
+
+# Uninstall (add --purge to also remove ~/.config/rustidian)
+curl -fsSL https://raw.githubusercontent.com/Hu-Tao128/rustidian/main/install.sh | sh -s -- --uninstall
+```
+
+> Auto-update replaces the running binary, so the install location must be
+> writable by your user. A per-user install (`~/.local/bin`) updates without
+> `sudo`; a `--system` install may need elevated permissions.
 
 ---
 
@@ -219,12 +253,14 @@ rustidian/
 | Env var | `RUSTIDIAN_VAULT=/path` — applied once, then persisted |
 | Config file | `~/.config/rustidian/config.toml` |
 | Theme | `dark_mode = true` (Mocha) / `false` (Latte) |
+| Updates | `check_updates = false` — check automatically on startup |
 
 Example `config.toml`:
 
 ```toml
 vault_path = "/home/user/Notes"
 dark_mode = true
+check_updates = false
 ```
 
 ---
