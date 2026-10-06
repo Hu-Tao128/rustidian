@@ -75,7 +75,10 @@ jobs:
           if [[ -f "rustidian-ui/packaging/icons/macos/rustidian.icns" ]]; then
             cp "rustidian-ui/packaging/icons/macos/rustidian.icns" "$OUT"
           else
-            PNG="$(ls rustidian-ui/packaging/icons/macos/*.png 2>/dev/null | head -1 || true)"
+            PNG="rustidian-ui/packaging/icons/macos/rustidian_black.png"
+            if [[ ! -f "$PNG" ]]; then
+              PNG="$(ls rustidian-ui/packaging/icons/macos/*.png 2>/dev/null | head -1 || true)"
+            fi
             if [[ -n "$PNG" && -f "$PNG" ]]; then
               ICONSET="build/AppIcon.iconset"
               rm -rf "$ICONSET"; mkdir -p "$ICONSET"
@@ -198,20 +201,11 @@ jobs:
       - name: Prepare installer icon
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $dst = "rustidian-ui/packaging/windows/rustidian.ico"
-          if (Test-Path "rustidian-ui/packaging/icons/windows/rustidian.ico") {
-            Copy-Item "rustidian-ui/packaging/icons/windows/rustidian.ico" $dst -Force
-          } else {
-            $png = Get-ChildItem "rustidian-ui/packaging/icons/windows/*.png" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($null -eq $png) {
-              $png = Get-ChildItem "rustidian-ui/packaging/icons/windows/*.svg" -ErrorAction SilentlyContinue | Select-Object -First 1
-            }
-            if ($null -ne $png) {
-              choco install imagemagick -y --no-progress
-              refreshenv
-              magick $png.FullName -background none -define icon:auto-resize=256,128,64,48,32,16 $dst
-            }
+          # Los iconos (.ico) ya están versionados en packaging/icons/windows;
+          # el instalador los usa directamente desde rustidian.iss.
+          if (-not (Test-Path "rustidian-ui/packaging/icons/windows/rustidian_black.ico") -or
+              -not (Test-Path "rustidian-ui/packaging/icons/windows/rustidian_white.ico")) {
+            throw "Faltan los iconos de Windows en packaging/icons/windows"
           }
 
       - name: Build
