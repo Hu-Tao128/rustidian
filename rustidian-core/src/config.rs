@@ -23,6 +23,13 @@ pub struct Config {
     /// Note id that was active when the app last closed, so it can be restored.
     #[serde(default)]
     pub active_note: String,
+    /// Whether to check for updates when the app starts.  Disabled by default;
+    /// the user can always trigger a manual check from the UI.
+    #[serde(default)]
+    pub check_updates: bool,
+    /// Version the user chose to skip, so the update prompt is not shown again.
+    #[serde(default)]
+    pub skipped_version: String,
 }
 
 impl Config {
@@ -45,6 +52,8 @@ impl Config {
                 dark_mode: default_dark_mode(),
                 open_tabs: Vec::new(),
                 active_note: String::new(),
+                check_updates: false,
+                skipped_version: String::new(),
             });
         }
         let raw = std::fs::read_to_string(&path)?;
@@ -93,10 +102,14 @@ mod tests {
             dark_mode: false,
             open_tabs: Vec::new(),
             active_note: String::new(),
+            check_updates: true,
+            skipped_version: "0.1.0".into(),
         };
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();
         assert!(!parsed.dark_mode);
+        assert!(parsed.check_updates);
+        assert_eq!(parsed.skipped_version, "0.1.0");
     }
 
     #[test]
@@ -105,6 +118,8 @@ mod tests {
         let config: Config = toml::from_str(raw).unwrap();
         assert!(config.open_tabs.is_empty());
         assert!(config.active_note.is_empty());
+        assert!(!config.check_updates);
+        assert!(config.skipped_version.is_empty());
     }
 
     #[test]
@@ -114,6 +129,8 @@ mod tests {
             dark_mode: true,
             open_tabs: vec!["A.md".into(), "Sub/B.md".into()],
             active_note: "Sub/B.md".into(),
+            check_updates: false,
+            skipped_version: String::new(),
         };
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();

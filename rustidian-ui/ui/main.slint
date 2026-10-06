@@ -81,6 +81,13 @@ export component AppWindow inherits Window {
     in-out property <bool> show-vault-picker: false;
     in-out property <string> vault-picker-error: "";
 
+    // ── Update dialog ────────────────────────────────────────────────────────
+    in-out property <bool> show-update-dialog: false;
+    in-out property <bool> update-checking: false;
+    in-out property <bool> update-available: false;
+    in-out property <string> update-latest: "";
+    in-out property <string> update-message: "";
+
     // ── callbacks ────────────────────────────────────────────────────────────
     callback note-selected(string);
     callback content-changed(string);
@@ -112,6 +119,11 @@ export component AppWindow inherits Window {
     callback toggle-theme();
     // tab-closed(id) — user clicked × on a tab
     callback tab-closed(string);
+
+    // Update flow: check, then optionally install the downloaded update.
+    callback check-updates-requested();
+    callback update-install-requested();
+    callback update-dismissed();
 
     // Markdown editing assistance (implemented in Rust, never in rustidian-core)
     callback handle-edit-key(string, bool, bool, bool, string, int, int) -> EditResult;
@@ -215,6 +227,7 @@ export component AppWindow inherits Window {
             note-moved(id, folder) => { root.note-moved(id, folder); }
             search-changed(q) => { root.search-changed(q); }
             vault-change-requested() => { root.browse-vault-requested(); }
+            check-updates-requested() => { root.check-updates-requested(); }
             rename-requested(id, new-title) => { root.rename-requested(id, new-title); }
             rename-folder-requested(path, new-name) => { root.rename-folder-requested(path, new-name); }
             toggle-sort-requested() => { root.toggle-sort-requested(); }
@@ -783,10 +796,90 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ── Update dialog ────────────────────────────────────────────────────────
+    if root.show-update-dialog: Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            clicked => { root.update-dismissed(); }
+        }
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: #000000;
+            opacity: 0.35;
+        }
+
+        Rectangle {
+            width: 380px;
+            height: update-box.preferred-height + 32px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+
+            TouchArea { width: parent.width; height: parent.height; }
+
+            update-box := VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+
+                Text {
+                    text: "Updates";
+                    color: Palette.text;
+                    font-size: 15px;
+                    font-weight: 700;
+                    height: 22px;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.update-message;
+                    color: Palette.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+
+                    PaletteButton {
+                        text: "Close";
+                        width: 96px;
+                        height: 30px;
+                        enabled: !root.update-checking;
+                        clicked => { root.update-dismissed(); }
+                    }
+
+                    if root.update-available: PaletteButton {
+                        text: "Install update";
+                        primary: true;
+                        width: 140px;
+                        height: 30px;
+                        enabled: !root.update-checking;
+                        clicked => { root.update-install-requested(); }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     forward-focus: key-handler;
     key-handler := FocusScope {
         key-pressed(event) => {
+            if (root.show-update-dialog && event.text == "\u{1b}") {
+                root.update-dismissed();
+                return accept;
+            }
             if (root.show-create-dialog && event.text == "\u{1b}") {
                 root.show-create-dialog = false;
                 root.create-error = "";

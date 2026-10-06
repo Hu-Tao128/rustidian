@@ -37,6 +37,7 @@ export component Sidebar inherits Rectangle {
     callback toggle-sort-requested();
     callback toggle-collapse-folders-requested();
     callback toggle-sidebar-requested();
+    callback check-updates-requested();
 
     // Which list to show: tree or search results.  Kept in a root property so
     // it does not depend on the search box, which lives inside the collapsed
@@ -659,6 +660,44 @@ export component Sidebar inherits Rectangle {
                 }
             }
         }
+
+        // Check for updates
+        Rectangle {
+            height: 30px;
+            border-radius: 4px;
+            background: update-touch.has-hover ? Palette.card : transparent;
+
+            update-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.check-updates-requested(); }
+            }
+
+            HorizontalBox {
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 8px;
+                alignment: start;
+
+                Image {
+                    source: @image-url("icons/update.svg");
+                    width: 16px;
+                    height: 16px;
+                    vertical-alignment: center;
+                    colorize: Palette.text;
+                }
+
+                Text {
+                    text: "Check for updates…";
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+            }
+        }
     }
 
     // ── Collapsed icon rail ──────────────────────────────────────────────────
@@ -717,6 +756,13 @@ export component Sidebar inherits Rectangle {
             tip: "Change vault…";
             height: 28px;
             clicked => { root.vault-change-requested(); }
+        }
+
+        IconButton {
+            icon: @image-url("icons/update.svg");
+            tip: "Check for updates…";
+            height: 28px;
+            clicked => { root.check-updates-requested(); }
         }
     }
 

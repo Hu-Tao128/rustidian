@@ -1,6 +1,6 @@
 [package]
 name = "rustidian-ui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Ultralight Markdown note editor built with Rust and Slint."
 license = "MIT"
@@ -39,6 +39,10 @@ dirs = "5"
 # Native folder picker.  We use the GTK3 backend (available on X11) instead of
 # the default xdg-portal/wayland stack to keep the old-hardware build lean.
 rfd = { version = "0.17", default-features = false, features = ["gtk3"] }
+ureq = "2"
+sha2 = "0.10"
+self-replace = "1"
+serde_json = "1"
 
 [build-dependencies]
 slint-build = "1.18"

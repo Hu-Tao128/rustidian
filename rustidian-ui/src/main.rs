@@ -1,5 +1,6 @@
 mod bridge;
 mod editor_assist;
+mod update;
 mod worker;
 
 use bridge::{blocks_to_items, to_backlink_items, tree_to_rows};
@@ -16,6 +17,12 @@ use worker::AppData;
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // ── CLI (--update / --check / --version / --help) ─────────────────────────
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(code) = update::handle_cli(&args) {
+        std::process::exit(code);
+    }
+
     // ── Shared state (vault path starts empty) ────────────────────────────────
     let shared: Arc<Mutex<AppData>> = Arc::new(Mutex::new(AppData::default()));
 
@@ -27,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Theme ─────────────────────────────────────────────────────────────────
     let config = Config::load().ok();
     let dark = config.as_ref().map(|c| c.dark_mode).unwrap_or(true);
+    let check_updates_on_start = config.as_ref().map(|c| c.check_updates).unwrap_or(false);
     ui.set_dark_mode(dark);
     apply_theme(&ui, dark);
 
@@ -927,6 +935,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dark_mode: dark,
                 open_tabs: Vec::new(),
                 active_note: String::new(),
+                check_updates: false,
+                skipped_version: String::new(),
             });
             config.dark_mode = dark;
             let _ = config.save();
@@ -998,6 +1008,118 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 persist_session(&ui, &shared2);
             }
             slint::CloseRequestResponse::HideWindow
+        });
+    }
+
+    // ── Update flow (manual, con chequeo opcional al inicio) ──────────────────
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_check_updates_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_show_update_dialog(true);
+            ui.set_update_checking(true);
+            ui.set_update_available(false);
+            ui.set_update_message("Buscando actualizaciones…".into());
+
+            let ui_weak2 = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = update::check();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak2.upgrade() {
+                        ui.set_update_checking(false);
+                        match result {
+                            Ok(Some(info)) => {
+                                ui.set_update_available(true);
+                                ui.set_update_latest(info.version.clone().into());
+                                ui.set_update_message(
+                                    format!(
+                                        "Hay una versión nueva: {} (tienes {}).",
+                                        info.version,
+                                        env!("CARGO_PKG_VERSION")
+                                    )
+                                    .into(),
+                                );
+                            }
+                            Ok(None) => {
+                                ui.set_update_message(
+                                    format!(
+                                        "Ya tienes la última versión ({}).",
+                                        env!("CARGO_PKG_VERSION")
+                                    )
+                                    .into(),
+                                );
+                            }
+                            Err(e) => {
+                                ui.set_update_message(
+                                    format!("No se pudieron comprobar: {e}").into(),
+                                );
+                            }
+                        }
+                    }
+                })
+                .ok();
+            });
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_update_install_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_update_checking(true);
+            ui.set_update_available(false);
+            ui.set_update_message("Descargando actualización…".into());
+
+            let ui_weak2 = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = update::check().and_then(|maybe| match maybe {
+                    Some(info) => update::download_and_apply(&info).map(|()| info.version),
+                    None => Err("Ya tienes la última versión.".to_string()),
+                });
+                slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak2.upgrade() {
+                        ui.set_update_checking(false);
+                        match result {
+                            Ok(version) => ui.set_update_message(
+                                format!("Actualizado a {version}. Reinicia Rustidian para usarla.")
+                                    .into(),
+                            ),
+                            Err(e) => {
+                                ui.set_update_message(format!("Error al actualizar: {e}").into())
+                            }
+                        }
+                    }
+                })
+                .ok();
+            });
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_update_dismissed(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_update_dialog(false);
+            }
+        });
+    }
+
+    if check_updates_on_start {
+        let ui_weak = ui.as_weak();
+        std::thread::spawn(move || {
+            if let Ok(Some(info)) = update::check() {
+                slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_update_available(true);
+                        ui.set_update_latest(info.version.clone().into());
+                        ui.set_update_message(
+                            format!("Hay una versión nueva: {}.", info.version).into(),
+                        );
+                        ui.set_show_update_dialog(true);
+                    }
+                })
+                .ok();
+            }
         });
     }
 
@@ -1181,6 +1303,8 @@ fn persist_session(ui: &AppWindow, shared: &Arc<Mutex<AppData>>) {
         dark_mode: ui.get_dark_mode(),
         open_tabs: Vec::new(),
         active_note: String::new(),
+        check_updates: false,
+        skipped_version: String::new(),
     });
     config.vault_path = vault;
     config.dark_mode = ui.get_dark_mode();
@@ -1228,6 +1352,8 @@ fn activate_vault(path: PathBuf, shared: Arc<Mutex<AppData>>, ui_weak: slint::We
         dark_mode: true,
         open_tabs: Vec::new(),
         active_note: String::new(),
+        check_updates: false,
+        skipped_version: String::new(),
     });
     config.vault_path = path.clone();
     // A different vault starts with a fresh session.
@@ -1252,12 +1378,7 @@ fn activate_vault(path: PathBuf, shared: Arc<Mutex<AppData>>, ui_weak: slint::We
 ///
 /// `kind` selects whether a note or a folder is being named; the actual
 /// creation happens in the `create-*-confirmed` handlers once the user submits.
-fn open_create_dialog(
-    ui: &AppWindow,
-    vault: &std::path::Path,
-    folder: &str,
-    kind: CreateKind,
-) {
+fn open_create_dialog(ui: &AppWindow, vault: &std::path::Path, folder: &str, kind: CreateKind) {
     let name = match kind {
         CreateKind::Note => next_untitled_name(vault, folder),
         CreateKind::Folder => next_folder_name(vault, folder),
