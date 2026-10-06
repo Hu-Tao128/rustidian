@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Rustidian
+GenericName=Markdown Note Editor
+Comment=Ultralight Markdown note editor built with Rust and Slint
+Exec=rustidian-ui
+Icon=rustidian
+Terminal=false
+Categories=Office;TextEditor;Utility;
+Keywords=markdown;notes;notas;editor;rustidian;
+StartupNotify=true

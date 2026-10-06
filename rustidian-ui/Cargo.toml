@@ -2,7 +2,35 @@
 name = "rustidian-ui"
 version = "0.1.0"
 edition = "2021"
+description = "Ultralight Markdown note editor built with Rust and Slint."
+license = "MIT"
+authors = ["Alcantara Huerta Angel Josue"]
 repository = "https://github.com/Hu-Tao128/rustidian"
+homepage = "https://github.com/Hu-Tao128/rustidian"
+
+# ── Debian / Ubuntu packaging (cargo-deb) ────────────────────────────────────
+[package.metadata.deb]
+name = "rustidian"
+maintainer = "Alcantara Huerta Angel Josue <Hu-Tao128@users.noreply.github.com>"
+section = "editors"
+priority = "optional"
+depends = "$auto, libc6, libgcc-s1, libfontconfig1, libglib2.0-0, libgtk-3-0 | libgtk-3-0t64"
+assets = [
+    ["target/release/rustidian-ui", "usr/bin/rustidian-ui", "755"],
+    ["packaging/rustidian.desktop", "usr/share/applications/rustidian.desktop", "644"],
+    ["packaging/rustidian.svg", "usr/share/icons/hicolor/scalable/apps/rustidian.svg", "644"],
+]
+
+# ── Fedora / RHEL packaging (cargo-generate-rpm) ─────────────────────────────
+[package.metadata.generate-rpm]
+name = "rustidian"
+summary = "Ultralight Markdown note editor"
+license = "MIT"
+assets = [
+    { source = "target/release/rustidian-ui", dest = "/usr/bin/rustidian-ui", mode = "755" },
+    { source = "packaging/rustidian.desktop", dest = "/usr/share/applications/rustidian.desktop", mode = "644" },
+    { source = "packaging/rustidian.svg", dest = "/usr/share/icons/hicolor/scalable/apps/rustidian.svg", mode = "644" },
+]
 
 [dependencies]
 rustidian-core = { path = "../rustidian-core" }
