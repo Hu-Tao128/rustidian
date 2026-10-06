@@ -66,6 +66,29 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare app icon
+        id: icon
+        run: |
+          set -euo pipefail
+          OUT="build/AppIcon.icns"
+          mkdir -p build
+          if [[ -f "rustidian-ui/packaging/icons/macos/rustidian.icns" ]]; then
+            cp "rustidian-ui/packaging/icons/macos/rustidian.icns" "$OUT"
+          else
+            PNG="$(ls rustidian-ui/packaging/icons/macos/*.png 2>/dev/null | head -1 || true)"
+            if [[ -n "$PNG" && -f "$PNG" ]]; then
+              ICONSET="build/AppIcon.iconset"
+              rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+              for s in 16 32 64 128 256 512; do
+                sips -z "$s" "$s" "$PNG" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+                d=$((s * 2))
+                sips -z "$d" "$d" "$PNG" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+              done
+              iconutil -c icns "$ICONSET" -o "$OUT"
+            fi
+          fi
+          if [[ -f "$OUT" ]]; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
+
       - name: Build
         env:
           GRAPH: ${{ inputs.graph }}
@@ -75,17 +98,21 @@ jobs:
           if [[ "$GRAPH" == "true" ]]; then FEATURES="--features graph"; fi
           cargo build --release -p rustidian-ui --target "${{ matrix.target }}" $FEATURES
 
-      - name: Package (.app, .dmg, .tar.gz)
+      - name: Package (.app, .dmg, .tar.gz, raw binary)
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           ARCH="${{ matrix.arch }}"
+          TARGET="${{ matrix.target }}"
           BIN="target/${{ matrix.target }}/release/rustidian-ui"
           APP="Rustidian.app"
 
           rm -rf "$APP"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp "$BIN" "$APP/Contents/MacOS/rustidian-ui"
+          if [[ "${{ steps.icon.outputs.have }}" == "true" ]]; then
+            cp "build/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+          fi
           cat > "$APP/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -97,6 +124,7 @@ jobs:
               <key>CFBundleVersion</key><string>${VERSION}</string>
               <key>CFBundleShortVersionString</key><string>${VERSION}</string>
               <key>CFBundleExecutable</key><string>rustidian-ui</string>
+              <key>CFBundleIconFile</key><string>AppIcon</string>
               <key>CFBundlePackageType</key><string>APPL</string>
               <key>LSMinimumSystemVersion</key><string>10.15</string>
               <key>NSHighResolutionCapable</key><true/>
@@ -105,7 +133,17 @@ jobs:
           PLIST
 
           tar -czf "rustidian-ui-${VERSION}-macos-${ARCH}.tar.gz" "$APP"
-          hdiutil create -volname "Rustidian ${VERSION}" -srcfolder "$APP" \
+          tar -czf "rustidian-ui-${VERSION}-${TARGET}.tar.gz" -C "$(dirname "$BIN")" "$(basename "$BIN")"
+
+          cp "$BIN" "rustidian-ui-${TARGET}"
+          shasum -a 256 "rustidian-ui-${TARGET}" | awk '{print $1"  rustidian-ui-'"${TARGET}"'"}' > "rustidian-ui-${TARGET}.sha256"
+
+          # .dmg con enlace a /Applications para arrastrar y soltar.
+          STAGE="dmg-stage"
+          rm -rf "$STAGE"; mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Rustidian ${VERSION}" -srcfolder "$STAGE" \
             -ov -format UDZO "rustidian-ui-${VERSION}-macos-${ARCH}.dmg"
 
       - name: Upload workflow artifact
@@ -113,8 +151,10 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}
           path: |
-            rustidian-ui-*-macos-*.tar.gz
+            rustidian-ui-*.tar.gz
             rustidian-ui-*-macos-*.dmg
+            rustidian-ui-*-apple-darwin
+            rustidian-ui-*-apple-darwin.sha256
 
       - name: Upload to GitHub Release
         run: |
@@ -124,6 +164,9 @@ jobs:
           gh release upload "$TAG" \
             rustidian-ui-*-macos-*.tar.gz \
             rustidian-ui-*-macos-*.dmg \
+            "rustidian-ui-${{ matrix.target }}.tar.gz" \
+            "rustidian-ui-${{ matrix.target }}" \
+            "rustidian-ui-${{ matrix.target }}.sha256" \
             --clobber
 
   # ── Windows x86_64 (MSVC) ──────────────────────────────────────────────────
@@ -152,6 +195,25 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare installer icon
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dst = "rustidian-ui/packaging/windows/rustidian.ico"
+          if (Test-Path "rustidian-ui/packaging/icons/windows/rustidian.ico") {
+            Copy-Item "rustidian-ui/packaging/icons/windows/rustidian.ico" $dst -Force
+          } else {
+            $png = Get-ChildItem "rustidian-ui/packaging/icons/windows/*.png" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $png) {
+              $png = Get-ChildItem "rustidian-ui/packaging/icons/windows/*.svg" -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+            if ($null -ne $png) {
+              choco install imagemagick -y --no-progress
+              refreshenv
+              magick $png.FullName -background none -define icon:auto-resize=256,128,64,48,32,16 $dst
+            }
+          }
+
       - name: Build
         shell: bash
         env:
@@ -162,23 +224,50 @@ jobs:
           if [[ "$GRAPH" == "true" ]]; then FEATURES="--features graph"; fi
           cargo build --release -p rustidian-ui $FEATURES
 
-      - name: Package (.zip)
+      - name: Package (.zip, raw binary, checksum)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $version = "${{ steps.version.outputs.version }}"
+          $target = "x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force -Path "stage" | Out-Null
           Copy-Item "target/release/rustidian-ui.exe" "stage/"
           if (Test-Path "README.md") { Copy-Item "README.md" "stage/" }
           if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   "stage/" }
           Compress-Archive -Path "stage/*" `
-            -DestinationPath "rustidian-ui-$version-windows-x86_64.zip" -Force
+            -DestinationPath "rustidian-ui-$version-$target.zip" -Force
+          Copy-Item "target/release/rustidian-ui.exe" "rustidian-ui-$target.exe" -Force
+
+      - name: Checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum rustidian-ui-x86_64-pc-windows-msvc.exe | \
+            awk '{print $1"  rustidian-ui-x86_64-pc-windows-msvc.exe"}' \
+            > rustidian-ui-x86_64-pc-windows-msvc.exe.sha256
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install innosetup -y --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          }
+          if (-not (Test-Path $iscc)) { throw "No se encontró ISCC.exe" }
+          & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" "/DSourceDir=$PWD" `
+            "rustidian-ui\packaging\windows\rustidian.iss"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
-          path: rustidian-ui-*-windows-*.zip
+          path: |
+            rustidian-ui-*-x86_64-pc-windows-msvc.zip
+            rustidian-ui-x86_64-pc-windows-msvc.exe
+            rustidian-ui-x86_64-pc-windows-msvc.exe.sha256
+            RustidianSetup-*.exe
 
       - name: Upload to GitHub Release
         shell: bash
@@ -186,4 +275,12 @@ jobs:
           set -euo pipefail
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --title "Rustidian $TAG" --generate-notes
-          gh release upload "$TAG" rustidian-ui-*-windows-*.zip --clobber
+          gh release upload "$TAG" \
+            rustidian-ui-*-x86_64-pc-windows-msvc.zip \
+            rustidian-ui-x86_64-pc-windows-msvc.exe \
+            rustidian-ui-x86_64-pc-windows-msvc.exe.sha256 \
+            RustidianSetup-*.exe \
+            --clobber
+
+# Windows/macOS signing is intentionally omitted: unsigned builds work but
+# SmartScreen/Gatekeeper show a warning. Add a certificate later if desired.
