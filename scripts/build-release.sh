@@ -7,6 +7,10 @@
 #   * .rpm            Fedora / RHEL / derivados      (cargo-generate-rpm)
 #   * .zip + .exe     Windows x86_64                 (cross-compile mingw-w64)
 #   * .dmg / .tar.gz  macOS                          (local en macOS o vía GitHub Actions)
+#   * .tar.gz         archive genérico para Linux    (+ binario crudo + .sha256)
+#
+# Además sube install.sh, el .desktop y el icono al release, para el instalador
+# de Linux y el auto-actualizador (`rustidian-ui --update`).
 #
 # Opcionalmente publica todo en un GitHub Release usando `gh` (debe estar
 # autenticado: `gh auth status`).
@@ -56,6 +60,14 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 PKG="rustidian-ui"
 HOST_OS="$(uname -s)"
+HOST_ARCH="$(uname -m)"
+case "$HOST_OS-$HOST_ARCH" in
+    Linux-x86_64)             HOST_TARGET="x86_64-unknown-linux-gnu" ;;
+    Linux-aarch64|Linux-arm64) HOST_TARGET="aarch64-unknown-linux-gnu" ;;
+    Darwin-x86_64)            HOST_TARGET="x86_64-apple-darwin" ;;
+    Darwin-arm64|Darwin-aarch64) HOST_TARGET="aarch64-apple-darwin" ;;
+    *)                        HOST_TARGET="" ;;
+esac
 
 # ── Valores por defecto ──────────────────────────────────────────────────────
 DO_DEB=0; DO_RPM=0; DO_WINDOWS=0; DO_MACOS=0
@@ -177,12 +189,88 @@ EOF
     esac
 }
 
+# ── Archivos, archivos genéricos y checksums ─────────────────────────────────
+sha256_of() {
+    if have sha256sum; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif have shasum; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        err "no se encontró sha256sum ni shasum"
+        return 1
+    fi
+}
+
+write_checksum() {
+    local f="$1" h
+    h="$(sha256_of "$f")" || return 1
+    printf '%s  %s\n' "$h" "$(basename "$f")" > "$f.sha256"
+    PRODUCED+=("$f.sha256")
+}
+
+# Empaqueta un binario (+ LICENSE/README) y publica también el binario crudo.
+# usage: make_archive <binario> <target-triple>
+make_archive() {
+    local bin="$1" target="$2"
+    local stage="$OUT_DIR/rustidian-ui-$VERSION-$target"
+    local name; name="$(basename "$stage")"
+
+    rm -rf "$stage"; mkdir -p "$stage"
+    cp "$bin" "$stage/"
+    cp "$ROOT/LICENSE" "$stage/" 2>/dev/null || true
+    cp "$ROOT/README.md" "$stage/" 2>/dev/null || true
+
+    local archive
+    case "$target" in
+        *windows*) archive="$OUT_DIR/$name.zip" ;;
+        *)         archive="$OUT_DIR/$name.tar.gz" ;;
+    esac
+    rm -f "$archive"
+    if [[ "$archive" == *.zip ]]; then
+        have zip || { err "falta 'zip' para empaquetar Windows"; return 1; }
+        ( cd "$OUT_DIR" && zip -q -r "$archive" "$name" ) || return 1
+    else
+        tar -C "$OUT_DIR" -czf "$archive" "$name" || return 1
+    fi
+    rm -rf "$stage"
+    PRODUCED+=("$archive")
+
+    # Binario crudo para el auto-actualizador.
+    local raw="$OUT_DIR/rustidian-ui-$target"
+    [[ "$target" == *windows* ]] && raw="$raw.exe"
+    cp "$bin" "$raw" || return 1
+    PRODUCED+=("$raw")
+    return 0
+}
+
+checksums_all() {
+    local f
+    for f in ${PRODUCED[@]+"${PRODUCED[@]}"}; do
+        [[ -f "$f" ]] || continue
+        [[ "$f" == *.sha256 ]] && continue
+        write_checksum "$f" || return 1
+    done
+    return 0
+}
+
 # ── Compilación local (Linux/macOS) ──────────────────────────────────────────
 build_host() {
     local extra=""
     [[ $GRAPH -eq 1 ]] && extra=" (con feature graph)"
     log "Compilando $PKG $VERSION$extra para el host…"
     cargo build --release -p "$PKG" ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}
+}
+
+# ── Archive genérico de Linux (binario crudo + tarball) ──────────────────────
+build_linux_archive() {
+    if [[ "$HOST_OS" != "Linux" ]]; then
+        warn "el archive de Linux solo se genera en un host Linux"
+        return 1
+    fi
+    [[ -n "$HOST_TARGET" ]] || { err "no se pudo determinar el target del host"; return 1; }
+    log "Empaquetando archive genérico de Linux ($HOST_TARGET)…"
+    make_archive "$ROOT/target/release/$PKG" "$HOST_TARGET" || return 1
+    return 0
 }
 
 # ── .deb ─────────────────────────────────────────────────────────────────────
@@ -230,22 +318,7 @@ build_windows() {
     local exe="$ROOT/target/x86_64-pc-windows-gnu/release/$PKG.exe"
     [[ -f "$exe" ]] || { err "no se generó $exe"; return 1; }
 
-    local stage="$OUT_DIR/rustidian-$VERSION-windows-x86_64"
-    rm -rf "$stage"; mkdir -p "$stage"
-    cp "$exe" "$stage/"
-    cp "$ROOT/LICENSE" "$stage/" 2>/dev/null || true
-    cp "$ROOT/README.md" "$stage/" 2>/dev/null || true
-
-    local zip="$OUT_DIR/rustidian-$VERSION-windows-x86_64.zip"
-    rm -f "$zip"
-    if have zip; then
-        ( cd "$OUT_DIR" && zip -q -r "$zip" "$(basename "$stage")" )
-        rm -rf "$stage"
-    else
-        warn "no hay 'zip'; se deja la carpeta sin comprimir"
-        zip="$stage"
-    fi
-    PRODUCED+=("$zip")
+    make_archive "$exe" "x86_64-pc-windows-gnu" || return 1
     return 0
 }
 
@@ -284,6 +357,8 @@ build_macos_local() {
     esac
     log "Compilando para macOS ($arch)…"
     cargo build --release -p "$PKG" ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} || return 1
+
+    make_archive "$ROOT/target/release/$PKG" "$HOST_TARGET" || return 1
 
     local app="$OUT_DIR/Rustidian.app"
     make_app_bundle "$ROOT/target/release/$PKG" "$app" || return 1
@@ -372,6 +447,14 @@ publish() {
     for f in ${PRODUCED[@]+"${PRODUCED[@]}"}; do
         [[ -f "$f" ]] && files+=("$f")
     done
+    # Assets de instalación (script de Linux y ficheros de escritorio).
+    local extra
+    for extra in \
+        "$ROOT/install.sh" \
+        "$ROOT/rustidian-ui/packaging/rustidian.desktop" \
+        "$ROOT/rustidian-ui/packaging/rustidian.svg"; do
+        [[ -f "$extra" ]] && files+=("$extra")
+    done
 
     if [[ ${#files[@]} -gt 0 ]]; then
         printf '\nArtefactos a publicar en %s%s%s:\n' "$C_BOLD" "$TAG" "$C_RESET"
@@ -443,6 +526,13 @@ if [[ $DO_MACOS -eq 1 ]]; then
         CI_PLATFORMS="${CI_PLATFORMS}macos,"
     fi
 fi
+
+# Archive genérico de Linux (tarball + binario crudo para el updater).
+if [[ $need_build -eq 1 && "$HOST_OS" == "Linux" ]]; then
+    run_target "Linux ($HOST_TARGET)" build_linux_archive
+fi
+
+checksums_all || warn "no se pudieron generar todos los checksums"
 
 if [[ $PUBLISH -eq 1 ]]; then
     publish
