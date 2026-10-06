@@ -2,6 +2,7 @@
 name = "rustidian-ui"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/Hu-Tao128/rustidian"
 
 [dependencies]
 rustidian-core = { path = "../rustidian-core" }
