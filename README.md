@@ -6,6 +6,24 @@ Plain `.md` files in a plain folder — no database, no proprietary format.
 
 ---
 
+## Download
+
+Prebuilt binaries are published on the
+[Releases](https://github.com/Hu-Tao128/rustidian/releases/latest) page:
+
+| Platform | Artifact | Installation |
+| --- | --- | --- |
+| Debian / Ubuntu | `rustidian_<version>_amd64.deb` | `sudo apt install ./rustidian_<version>_amd64.deb` |
+| Fedora / RHEL | `rustidian-<version>-1.x86_64.rpm` | `sudo dnf install ./rustidian-<version>-1.x86_64.rpm` |
+| Windows x86_64 | `rustidian-<version>-windows-x86_64.zip` | unzip and run `rustidian-ui.exe` |
+| macOS (Apple Silicon / Intel) | `rustidian-<version>-macos-*.dmg` | open the `.dmg` and drag **Rustidian** into *Applications* |
+
+The installed launcher is `rustidian-ui`, and it also shows up as **Rustidian**
+in your application menu. Prefer to build it yourself? See
+[Building](#building).
+
+---
+
 ## Features
 
 - **Create, edit, rename and delete** Markdown notes
@@ -116,6 +134,24 @@ cargo build --release -p rustidian-ui --features graph
 ```
 
 The binary lands in `target/release/rustidian-ui`.
+
+### Release packages
+
+`scripts/build-release.sh` builds and packages the distributables (`.deb`,
+`.rpm`, a Windows `.zip` and macOS `.dmg`/`.tar.gz`) and can publish them to a
+GitHub Release with the `gh` CLI:
+
+```sh
+# Packages only (written to target/distrib/)
+./scripts/build-release.sh --deb --rpm --no-release
+
+# Everything and publish a release
+./scripts/build-release.sh --all
+```
+
+Run `./scripts/build-release.sh --help` for all options. Windows and macOS
+artifacts are built by the `ci-release.yml` workflow when they cannot be
+produced natively on the local machine.
 
 ---
 
