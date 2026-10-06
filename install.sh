@@ -136,6 +136,7 @@ BIN_URL="$BASE_URL/$BIN_NAME-$TARGET"
 SUM_URL="$BIN_URL.sha256"
 DESKTOP_URL="$BASE_URL/rustidian.desktop"
 SVG_URL="$BASE_URL/rustidian.svg"
+SVG_WHITE_URL="$BASE_URL/rustidian-white.svg"
 
 # ── Descarga y verificación ──────────────────────────────────────────────────
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t rustidian)"
@@ -198,6 +199,9 @@ EOF
     download "$SVG_URL" "$TMP/rustidian.svg" 2>/dev/null \
         && run cp "$TMP/rustidian.svg" "$ICON_PATH" \
         || warn "no se pudo descargar el icono"
+    download "$SVG_WHITE_URL" "$TMP/rustidian-white.svg" 2>/dev/null \
+        && run cp "$TMP/rustidian-white.svg" "$ICON_DIR/rustidian-white.svg" \
+        || true
     command -v update-desktop-database >/dev/null 2>&1 \
         && run update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 fi

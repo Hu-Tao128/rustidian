@@ -27,6 +27,11 @@ export global AppState {
 
 export component AppWindow inherits Window {
     title: "Rustidian";
+    // Window/taskbar icon follows the theme: dark tile in dark mode (Mocha),
+    // light tile in light mode (Latte).
+    icon: root.dark-mode
+        ? @image-url("icons/brand_black.png")
+        : @image-url("icons/brand_white.png");
     min-width: 640px;
     min-height: 480px;
     preferred-width: 1100px;

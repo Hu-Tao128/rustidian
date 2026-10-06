@@ -19,6 +19,7 @@ assets = [
     ["target/release/rustidian-ui", "usr/bin/rustidian-ui", "755"],
     ["packaging/rustidian.desktop", "usr/share/applications/rustidian.desktop", "644"],
     ["packaging/rustidian.svg", "usr/share/icons/hicolor/scalable/apps/rustidian.svg", "644"],
+    ["packaging/rustidian-white.svg", "usr/share/icons/hicolor/scalable/apps/rustidian-white.svg", "644"],
 ]
 
 # ── Fedora / RHEL packaging (cargo-generate-rpm) ─────────────────────────────
@@ -30,6 +31,7 @@ assets = [
     { source = "target/release/rustidian-ui", dest = "/usr/bin/rustidian-ui", mode = "755" },
     { source = "packaging/rustidian.desktop", dest = "/usr/share/applications/rustidian.desktop", mode = "644" },
     { source = "packaging/rustidian.svg", dest = "/usr/share/icons/hicolor/scalable/apps/rustidian.svg", mode = "644" },
+    { source = "packaging/rustidian-white.svg", dest = "/usr/share/icons/hicolor/scalable/apps/rustidian-white.svg", mode = "644" },
 ]
 
 [dependencies]
