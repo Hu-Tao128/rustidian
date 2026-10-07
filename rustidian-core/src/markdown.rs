@@ -503,7 +503,13 @@ pub fn encode_wikilink_target(target: &str) -> String {
 /// a wikilink URL.
 pub fn decode_wikilink_target(url: &str) -> Option<String> {
     let rest = url.strip_prefix(WIKILINK_SCHEME)?;
-    let bytes = rest.as_bytes();
+    Some(percent_decode(rest))
+}
+
+/// Percent-decode a URL or URL path (`%20` → space, `%C3%A9` → `é`).  Invalid
+/// escapes are left untouched.
+pub fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -519,7 +525,27 @@ pub fn decode_wikilink_target(url: &str) -> Option<String> {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(out).ok()
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// If *inlines* is effectively a single image (only whitespace/breaks around
+/// it), return its `(alt, url)`.
+pub fn single_image(inlines: &[Inline]) -> Option<(&str, &str)> {
+    let mut found: Option<(&str, &str)> = None;
+    for inline in inlines {
+        match inline {
+            Inline::Image { alt, url } => {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some((alt.as_str(), url.as_str()));
+            }
+            Inline::Text(text) if text.trim().is_empty() => {}
+            Inline::SoftBreak | Inline::HardBreak => {}
+            _ => return None,
+        }
+    }
+    found
 }
 
 /// Walk the block tree and turn `[[wikilinks]]` found in text into links.
@@ -919,5 +945,27 @@ mod tests {
         let blocks = parse_blocks("[[Simple]]");
         let markup = inlines_to_markdown(first_paragraph(&blocks));
         assert_eq!(markup, "[Simple](rustidian://Simple)");
+    }
+
+    #[test]
+    fn single_image_only_when_paragraph_is_just_an_image() {
+        let blocks = parse_blocks("![alt](img.png)");
+        assert_eq!(
+            single_image(first_paragraph(&blocks)),
+            Some(("alt", "img.png"))
+        );
+
+        let blocks = parse_blocks("text ![a](b.png)");
+        assert_eq!(single_image(first_paragraph(&blocks)), None);
+
+        let blocks = parse_blocks("![a](b.png) ![c](d.png)");
+        assert_eq!(single_image(first_paragraph(&blocks)), None);
+    }
+
+    #[test]
+    fn percent_decode_handles_spaces_and_invalid_escapes() {
+        assert_eq!(percent_decode("a%20b%2Fc"), "a b/c");
+        assert_eq!(percent_decode("caf%C3%A9"), "café");
+        assert_eq!(percent_decode("sin%2"), "sin%2");
     }
 }

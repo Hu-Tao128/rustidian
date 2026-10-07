@@ -37,6 +37,8 @@ assets = [
 [dependencies]
 rustidian-core = { path = "../rustidian-core" }
 slint = { version = "1.18", default-features = false, features = ["backend-winit", "renderer-software", "compat-1-18"] }
+# Decodificación de imágenes del usuario (mismos formatos que ya usa Slint).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 dirs = "5"
 # Native folder picker.  We use the GTK3 backend (available on X11) instead of
 # the default xdg-portal/wayland stack to keep the old-hardware build lean.
@@ -48,6 +50,9 @@ serde_json = "1"
 
 [build-dependencies]
 slint-build = "1.18"
+
+[dev-dependencies]
+tempfile = "3"
 
 [features]
 graph = ["rustidian-core/graph"]

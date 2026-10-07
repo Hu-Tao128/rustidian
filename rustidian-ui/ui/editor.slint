@@ -11,6 +11,9 @@ export component Editor inherits Rectangle {
     in property <[string]> note-titles: [];
     in-out property <[string]> suggestions: [];
     in-out property <bool> show-suggestions: false;
+    // When set to a non-empty string, it is spliced in at the caret (via
+    // `request-insert`) and then cleared.  Used to insert images.
+    in-out property <string> pending-insert: "";
 
     callback content-changed(string);
     // (key-text, ctrl, shift, alt, content, cursor, anchor) -> result
@@ -18,6 +21,26 @@ export component Editor inherits Rectangle {
     // (title, content, cursor) -> result
     callback accept-suggestion(string, string, int) -> EditResult;
     callback update-suggestions(string, int);
+    // (insert-text, content, cursor) -> result — splice text at the caret.
+    callback request-insert(string, string, int) -> EditResult;
+    // A drag-and-drop payload was dropped on the editor (may carry files).
+    callback files-dropped(data-transfer);
+
+    changed pending-insert => {
+        if (root.pending-insert != "") {
+            let res = root.request-insert(
+                root.pending-insert,
+                input.text,
+                input.cursor-position-byte-offset
+            );
+            if (res.handled) {
+                input.text = res.text;
+                input.set-selection-offsets(res.anchor, res.cursor);
+                root.content-changed(input.text);
+            }
+            root.pending-insert = "";
+        }
+    }
 
     // Left border — visual separator
     Rectangle {
@@ -75,6 +98,17 @@ export component Editor inherits Rectangle {
                 }
                 reject
             }
+        }
+    }
+
+    // ── Drop images files straight into the note ─────────────────────────────
+    drop-area := DropArea {
+        width: parent.width;
+        height: parent.height;
+        can-drop(event) => { return DragAction.copy; }
+        dropped(event) => {
+            root.files-dropped(event.data);
+            return DragAction.copy;
         }
     }
 

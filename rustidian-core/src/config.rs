@@ -7,6 +7,11 @@ fn default_dark_mode() -> bool {
     true
 }
 
+/// Default folder (relative to the vault) where pasted/inserted images are stored.
+fn default_attachment_folder() -> String {
+    "attachments".to_owned()
+}
+
 /// User configuration persisted in `~/.config/rustidian/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -30,6 +35,10 @@ pub struct Config {
     /// Version the user chose to skip, so the update prompt is not shown again.
     #[serde(default)]
     pub skipped_version: String,
+    /// Folder (relative to the vault) where inserted images/attachments are
+    /// copied.  Created on demand.
+    #[serde(default = "default_attachment_folder")]
+    pub attachment_folder: String,
 }
 
 impl Config {
@@ -54,6 +63,7 @@ impl Config {
                 active_note: String::new(),
                 check_updates: false,
                 skipped_version: String::new(),
+                attachment_folder: default_attachment_folder(),
             });
         }
         let raw = std::fs::read_to_string(&path)?;
@@ -104,6 +114,7 @@ mod tests {
             active_note: String::new(),
             check_updates: true,
             skipped_version: "0.1.0".into(),
+            attachment_folder: "assets".into(),
         };
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();
@@ -120,6 +131,7 @@ mod tests {
         assert!(config.active_note.is_empty());
         assert!(!config.check_updates);
         assert!(config.skipped_version.is_empty());
+        assert_eq!(config.attachment_folder, "attachments");
     }
 
     #[test]
@@ -131,6 +143,7 @@ mod tests {
             active_note: "Sub/B.md".into(),
             check_updates: false,
             skipped_version: String::new(),
+            attachment_folder: default_attachment_folder(),
         };
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();

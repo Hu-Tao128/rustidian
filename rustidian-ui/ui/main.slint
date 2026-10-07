@@ -1,4 +1,4 @@
-import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 import { NoteItem, BacklinkItem, TabItem, TreeRow, BlockItem, EditResult, Dnd, Links } from "types.slint";
 import { Palette } from "theme.slint";
 import { Sidebar } from "sidebar.slint";
@@ -93,6 +93,19 @@ export component AppWindow inherits Window {
     in-out property <string> update-latest: "";
     in-out property <string> update-message: "";
 
+    // Absolute path of the active vault and the folder for attachments.
+    in property <string> vault-path: "";
+    in property <string> attachment-folder: "attachments";
+
+    // ── Image zoom modal ─────────────────────────────────────────────────────
+    in-out property <bool> show-image-modal: false;
+    in-out property <image> modal-image;
+    in-out property <string> modal-image-name: "";
+    in-out property <string> modal-image-path: "";
+
+    // Text the editor should splice in at the caret (used to insert images).
+    in-out property <string> editor-insert: "";
+
     // ── callbacks ────────────────────────────────────────────────────────────
     callback note-selected(string);
     callback content-changed(string);
@@ -129,6 +142,16 @@ export component AppWindow inherits Window {
     callback check-updates-requested();
     callback update-install-requested();
     callback update-dismissed();
+
+    // Images: insert from disk, open the zoom modal, save a copy, close modal.
+    callback insert-image-requested();
+    callback image-clicked(string);
+    callback save-image-requested(string);
+    callback image-modal-closed();
+    // Splice `insert` into `content` at `cursor`, returning the new text/caret.
+    callback request-insert(string, string, int) -> EditResult;
+    // Files (images) dropped onto the editor.
+    callback files-dropped(data-transfer);
 
     // Markdown editing assistance (implemented in Rust, never in rustidian-core)
     callback handle-edit-key(string, bool, bool, bool, string, int, int) -> EditResult;
@@ -346,14 +369,13 @@ export component AppWindow inherits Window {
                                     width: parent.width;
                                     height: parent.height;
 
-                                    Text {
-                                        text: "×";
-                                        color: close-touch.has-hover ? Palette.danger : Palette.text-muted;
-                                        font-size: 14px;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        width: parent.width;
-                                        height: parent.height;
+                                    Image {
+                                        source: @image-url("icons/close.svg");
+                                        width: 12px;
+                                        height: 12px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: close-touch.has-hover ? Palette.danger : Palette.text-muted;
                                     }
                                 }
                             }
@@ -574,6 +596,14 @@ export component AppWindow inherits Window {
                         }
 
                         PaletteButton {
+                            text: "Image…";
+                            width: 84px;
+                            height: 28px;
+                            enabled: root.current-note-id != "";
+                            clicked => { root.insert-image-requested(); }
+                        }
+
+                        PaletteButton {
                             text: "Save";
                             primary: true;
                             width: 72px;
@@ -623,7 +653,12 @@ export component AppWindow inherits Window {
                     note-titles: root.note-titles;
                     suggestions <=> root.suggestions;
                     show-suggestions <=> root.show-suggestions;
+                    pending-insert <=> root.editor-insert;
                     content-changed(t) => { root.content-changed(t); }
+                    files-dropped(data) => { root.files-dropped(data); }
+                    request-insert(insert, content, cursor) => {
+                        return root.request-insert(insert, content, cursor);
+                    }
                     handle-edit-key(key, ctrl, shift, alt, content, cursor, anchor) => {
                         return root.handle-edit-key(key, ctrl, shift, alt, content, cursor, anchor);
                     }
@@ -644,6 +679,7 @@ export component AppWindow inherits Window {
                 if root.view-mode == ViewMode.split || root.view-mode == ViewMode.preview: Preview {
                     horizontal-stretch: 1;
                     blocks: root.preview-blocks;
+                    image-clicked(p) => { root.image-clicked(p); }
                 }
             }
 
@@ -877,10 +913,102 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ── Image zoom modal ─────────────────────────────────────────────────────
+    if root.show-image-modal: Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            clicked => { root.image-modal-closed(); }
+        }
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: #000000;
+            opacity: 0.6;
+        }
+
+        Rectangle {
+            width: min(parent.width - 48px, 1100px);
+            height: parent.height - 64px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+
+            // Keep clicks inside the card from reaching the closing scrim.
+            TouchArea { width: parent.width; height: parent.height; }
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+
+                HorizontalBox {
+                    alignment: space-between;
+                    spacing: 8px;
+
+                    Text {
+                        text: root.modal-image-name;
+                        color: Palette.text;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+
+                    PaletteButton {
+                        text: "Save as…";
+                        width: 110px;
+                        height: 28px;
+                        enabled: root.modal-image-path != "";
+                        clicked => { root.save-image-requested(root.modal-image-path); }
+                    }
+
+                    PaletteButton {
+                        text: "Close";
+                        primary: true;
+                        width: 84px;
+                        height: 28px;
+                        clicked => { root.image-modal-closed(); }
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Palette.bg;
+                    border-radius: 4px;
+                    clip: true;
+
+                    ScrollView {
+                        width: parent.width;
+                        height: parent.height;
+
+                        // Full-quality image at natural size (scroll to inspect).
+                        Image {
+                            source: root.modal-image;
+                            image-fit: preserve;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     forward-focus: key-handler;
     key-handler := FocusScope {
         key-pressed(event) => {
+            if (root.show-image-modal && event.text == "\u{1b}") {
+                root.image-modal-closed();
+                return accept;
+            }
             if (root.show-update-dialog && event.text == "\u{1b}") {
                 root.update-dismissed();
                 return accept;

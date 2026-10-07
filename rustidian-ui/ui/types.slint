@@ -77,6 +77,7 @@ export enum BlockKind {
     quote,
     table,
     rule,
+    image,
 }
 
 // One rendered Markdown block.  `markup` is pre-parsed by Rust into a
@@ -100,6 +101,11 @@ export struct BlockItem {
     // Tables: cells in row-major order (header row first) and column count.
     cells: [string],
     columns: int,
+    // Images: downscaled preview (thumbnail), absolute path for opening the
+    // full-quality version and the alt text.
+    image: image,
+    image-path: string,
+    alt: string,
 }
 
 // ── Editor assistance ────────────────────────────────────────────────────────

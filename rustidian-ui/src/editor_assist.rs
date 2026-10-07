@@ -33,6 +33,17 @@ fn not_handled(content: &str, cursor: i32, anchor: i32) -> EditResult {
     }
 }
 
+/// Splice *insert* into *content* at the (clamped) byte offset *cursor* and put
+/// the caret after the inserted text.
+pub fn insert_at(content: &str, cursor: i32, insert: &str) -> EditResult {
+    let pos = clamp(cursor, content);
+    let mut out = String::with_capacity(content.len() + insert.len());
+    out.push_str(&content[..pos]);
+    out.push_str(insert);
+    out.push_str(&content[pos..]);
+    handled(out, pos + insert.len())
+}
+
 /// If the cursor sits inside an unterminated `[[…`, return the filter text
 /// typed so far (the part after `[[`).
 pub fn wikilink_query(text: &str, cursor: usize) -> Option<&str> {

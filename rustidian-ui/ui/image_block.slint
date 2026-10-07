@@ -1,0 +1,45 @@
+import { Palette } from "theme.slint";
+
+// A standalone image in the preview.  Shows a downscaled thumbnail (kept small
+// in memory) that preserves the aspect ratio; clicking opens the full-quality
+// image in the zoom modal.
+export component ImageBlock inherits Rectangle {
+    in property <image> source;
+    in property <string> path;
+    in property <string> alt;
+    in property <length> thumb-max-height: 280px;
+    callback clicked(string);
+
+    height: source.width > 0 && source.height > 0
+        ? min(thumb-max-height, self.width * (source.height / source.width))
+        : 30px;
+    background: Palette.card;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Palette.border;
+    clip: true;
+
+    if source.width > 0: Image {
+        source: root.source;
+        width: parent.width;
+        height: parent.height;
+        image-fit: contain;
+    }
+
+    if source.width <= 0: Text {
+        text: alt != "" ? alt : "Image";
+        color: Palette.text-muted;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(root.path); }
+    }
+}

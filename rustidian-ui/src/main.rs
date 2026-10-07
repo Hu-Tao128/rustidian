@@ -937,6 +937,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 active_note: String::new(),
                 check_updates: false,
                 skipped_version: String::new(),
+                attachment_folder: "attachments".into(),
             });
             config.dark_mode = dark;
             let _ = config.save();
@@ -1123,6 +1124,160 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // ── Imágenes: insertar, ver en grande y guardar ───────────────────────────
+    {
+        // Splice the generated Markdown at the caret inside the editor.
+        ui.on_request_insert(|insert, content, cursor| {
+            editor_assist::insert_at(content.as_str(), cursor, insert.as_str())
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_image_clicked(move |path| {
+            if let Some(ui) = ui_weak.upgrade() {
+                let p = PathBuf::from(path.as_str());
+                match bridge::load_full_image(&p) {
+                    Some(image) => {
+                        let name = p
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.to_string());
+                        ui.set_modal_image(image);
+                        ui.set_modal_image_name(name.into());
+                        ui.set_modal_image_path(path.clone());
+                        ui.set_show_image_modal(true);
+                    }
+                    None => {
+                        ui.set_status_kind(StatusKind::Error);
+                        ui.set_status_message("No se pudo abrir la imagen.".into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_image_modal_closed(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_image_modal(false);
+                ui.set_modal_image(slint::Image::default());
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_save_image_requested(move |path| {
+            let ui_weak = ui_weak.clone();
+            let src = PathBuf::from(path.as_str());
+            std::thread::spawn(move || {
+                let default_name = src
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "image.png".to_owned());
+                if let Some(dest) = rfd::FileDialog::new()
+                    .set_file_name(default_name)
+                    .save_file()
+                {
+                    let result = std::fs::copy(&src, &dest);
+                    if let Some(ui) = ui_weak.upgrade() {
+                        match result {
+                            Ok(_) => {
+                                ui.set_status_kind(StatusKind::Success);
+                                ui.set_status_message(
+                                    format!("Imagen guardada en {}", dest.display()).into(),
+                                );
+                            }
+                            Err(e) => {
+                                ui.set_status_kind(StatusKind::Error);
+                                ui.set_status_message(format!("No se pudo guardar: {e}").into());
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    // Insert an image chosen with the native file picker.
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_insert_image_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let vault = shared2.lock().unwrap().vault_path.clone();
+            let note_id = ui.get_current_note_id().to_string();
+            let attachments = ui.get_attachment_folder().to_string();
+            let ui_weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
+                    .pick_file();
+                let Some(src) = picked else { return };
+                match vault::import_attachment(&vault, &note_id, &src, &attachments) {
+                    Ok(rel) => {
+                        let alt = src
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let markdown = image_markdown(&alt, &rel);
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_editor_insert(markdown.into());
+                            }
+                        })
+                        .ok();
+                    }
+                    Err(e) => {
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_status_kind(StatusKind::Error);
+                                ui.set_status_message(
+                                    format!("No se pudo importar la imagen: {e}").into(),
+                                );
+                            }
+                        })
+                        .ok();
+                    }
+                }
+            });
+        });
+    }
+
+    // Insert images dropped onto the editor.
+    {
+        let ui_weak = ui.as_weak();
+        let shared2 = Arc::clone(&shared);
+        ui.on_files_dropped(move |data| {
+            let paths: Vec<PathBuf> = data
+                .file_paths()
+                .map(|it| it.map(|p| p.to_path_buf()).collect())
+                .unwrap_or_default();
+            if paths.is_empty() {
+                return;
+            }
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let vault = shared2.lock().unwrap().vault_path.clone();
+            let note_id = ui.get_current_note_id().to_string();
+            let attachments = ui.get_attachment_folder().to_string();
+            let mut marks = Vec::new();
+            for src in paths {
+                if let Ok(rel) = vault::import_attachment(&vault, &note_id, &src, &attachments) {
+                    let alt = src
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    marks.push(image_markdown(&alt, &rel));
+                }
+            }
+            if !marks.is_empty() {
+                ui.set_editor_insert(marks.join("\n").into());
+            }
+        });
+    }
+
     ui.run()?;
     Ok(())
 }
@@ -1172,8 +1327,17 @@ fn apply_theme(ui: &AppWindow, dark: bool) {
 
 /// Render Markdown content into the preview block model.
 fn render_preview(ui: &AppWindow, content: &str) {
-    let items = blocks_to_items(&parse_blocks(content));
+    let note_id = ui.get_current_note_id().to_string();
+    let vault = PathBuf::from(ui.get_vault_path().as_str());
+    let attachments = ui.get_attachment_folder().to_string();
+    let items = blocks_to_items(&parse_blocks(content), &vault, &note_id, &attachments);
     ui.set_preview_blocks(ModelRc::new(VecModel::from(items)));
+}
+
+/// Markdown to insert for an image, placed on its own line.
+fn image_markdown(alt: &str, rel: &str) -> String {
+    let alt = alt.replace('[', "(").replace(']', ")");
+    format!("\n![{alt}]({rel})\n")
 }
 
 /// Rebuild the sidebar tree, note titles and backlinks from shared state.
@@ -1305,6 +1469,7 @@ fn persist_session(ui: &AppWindow, shared: &Arc<Mutex<AppData>>) {
         active_note: String::new(),
         check_updates: false,
         skipped_version: String::new(),
+        attachment_folder: "attachments".into(),
     });
     config.vault_path = vault;
     config.dark_mode = ui.get_dark_mode();
@@ -1340,6 +1505,10 @@ fn open_vault(vault: PathBuf, shared: Arc<Mutex<AppData>>, ui_weak: slint::Weak<
         data.vault_path = vault.clone();
     }
     if let Some(ui) = ui_weak.upgrade() {
+        ui.set_vault_path(vault.to_string_lossy().into_owned().into());
+        if let Ok(cfg) = Config::load() {
+            ui.set_attachment_folder(cfg.attachment_folder.into());
+        }
         ui.set_status_kind(StatusKind::Info);
         ui.set_status_message(format!("Vault: {}", vault.display()).into());
     }
@@ -1354,6 +1523,7 @@ fn activate_vault(path: PathBuf, shared: Arc<Mutex<AppData>>, ui_weak: slint::We
         active_note: String::new(),
         check_updates: false,
         skipped_version: String::new(),
+        attachment_folder: "attachments".into(),
     });
     config.vault_path = path.clone();
     // A different vault starts with a fresh session.

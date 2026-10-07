@@ -9,6 +9,7 @@ import { CodeBlock } from "code_block.slint";
 import { BlockQuoteBlock } from "block_quote.slint";
 import { TableBlock } from "table_block.slint";
 import { ThematicBreakBlock } from "thematic_break.slint";
+import { ImageBlock } from "image_block.slint";
 
 // Preview pane: renders the parsed Markdown block model with dedicated
 // components per block kind.
@@ -17,6 +18,9 @@ export component Preview inherits Rectangle {
 
     // Parsed Markdown blocks, produced by rustidian-core and bridged in Rust.
     in property <[BlockItem]> blocks: [];
+
+    // A clickable image was activated (carries its absolute path).
+    callback image-clicked(string);
 
     ScrollView {
         x: 0px;
@@ -81,6 +85,13 @@ export component Preview inherits Rectangle {
                 }
 
                 if block.kind == BlockKind.rule: ThematicBreakBlock { }
+
+                if block.kind == BlockKind.image: ImageBlock {
+                    source: block.image;
+                    path: block.image-path;
+                    alt: block.alt;
+                    clicked(p) => { root.image-clicked(p); }
+                }
             }
         }
     }

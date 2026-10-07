@@ -439,6 +439,183 @@ pub fn delete_folder(vault: &Path, path: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+// ── imágenes / adjuntos ──────────────────────────────────────────────────────
+
+/// Absolute path of the folder that contains a note.
+pub fn note_dir(vault: &Path, note_id: &str) -> PathBuf {
+    let parent = Path::new(note_id).parent().unwrap_or_else(|| Path::new(""));
+    vault.join(parent)
+}
+
+/// Replace characters that would break a Markdown link with `_`.
+fn sanitize_file_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if ch.is_whitespace()
+            || matches!(
+                ch,
+                '/' | '\\'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '<'
+                    | '>'
+                    | '#'
+                    | '?'
+                    | '%'
+                    | '"'
+                    | '\''
+                    | '|'
+                    | '*'
+                    | ':'
+            )
+        {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    if out.is_empty() {
+        out.push_str("image");
+    }
+    out
+}
+
+/// First free path for *name* inside *dir*, appending `-1`, `-2`… if needed.
+fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let candidate = dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let path = Path::new(name);
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "image".to_owned());
+    let ext = path.extension().map(|s| s.to_string_lossy().into_owned());
+    let mut n = 1u32;
+    loop {
+        let candidate = match &ext {
+            Some(ext) => dir.join(format!("{stem}-{n}.{ext}")),
+            None => dir.join(format!("{stem}-{n}")),
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Relative path from *from* to *to* (lexical, no canonicalisation).
+fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let mut common = 0;
+    while common < from_components.len()
+        && common < to_components.len()
+        && from_components[common] == to_components[common]
+    {
+        common += 1;
+    }
+    let mut rel = PathBuf::new();
+    for _ in common..from_components.len() {
+        rel.push("..");
+    }
+    for component in &to_components[common..] {
+        rel.push(component);
+    }
+    if rel.as_os_str().is_empty() {
+        None
+    } else {
+        Some(rel)
+    }
+}
+
+/// Copy *source* into the vault's attachment folder and return the path relative
+/// to the note (using `/`), ready to insert into Markdown as `![](path)`.
+pub fn import_attachment(
+    vault: &Path,
+    note_id: &str,
+    source: &Path,
+    attachment_folder: &str,
+) -> Result<String, CoreError> {
+    if !source.is_file() {
+        return Err(CoreError::NotFound(source.display().to_string()));
+    }
+
+    let folder = attachment_folder.trim().trim_matches('/');
+    let folder = if folder.is_empty() {
+        "attachments"
+    } else {
+        folder
+    };
+    let dest_dir = vault.join(folder);
+    std::fs::create_dir_all(&dest_dir)?;
+
+    let raw_name = source
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .ok_or_else(|| CoreError::NotFound(source.display().to_string()))?;
+    let safe = sanitize_file_name(&raw_name);
+    let dest = unique_path(&dest_dir, &safe);
+    std::fs::copy(source, &dest)?;
+
+    let from = note_dir(vault, note_id);
+    let rel = relative_path(&from, &dest).unwrap_or_else(|| dest.clone());
+    Ok(rel.to_string_lossy().replace('\\', "/"))
+}
+
+/// Resolve a Markdown image URL to an absolute path (or `None` for external
+/// URLs such as `http(s)://` and `data:`).  Relative paths are resolved against
+/// the note's folder, then the vault root, then the attachments folder.
+pub fn resolve_image_path(
+    vault: &Path,
+    note_id: &str,
+    url: &str,
+    attachment_folder: &str,
+) -> Option<PathBuf> {
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("data:")
+        || lower.starts_with("mailto:")
+        || lower.starts_with("rustidian://")
+    {
+        return None;
+    }
+
+    let raw = url.strip_prefix("file://").unwrap_or(url);
+    let decoded = crate::markdown::percent_decode(raw);
+    let path = Path::new(&decoded);
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+
+    let folder = attachment_folder.trim().trim_matches('/');
+    let folder = if folder.is_empty() {
+        "attachments"
+    } else {
+        folder
+    };
+    let candidates = [
+        note_dir(vault, note_id).join(path),
+        vault.join(path),
+        vault.join(folder).join(path),
+    ];
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return Some(candidate.clone());
+        }
+    }
+    // Not found: return the most likely location so the UI can show a marker.
+    Some(candidates[0].clone())
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -730,5 +907,52 @@ mod tests {
         let vault = dir.path();
         let err = delete_folder(vault, "").unwrap_err();
         assert!(matches!(err, CoreError::NotFound(_)));
+    }
+
+    #[test]
+    fn import_attachment_returns_relative_path() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        let source = vault.join("source.png");
+        fs::write(&source, b"fake").unwrap();
+
+        let rel = import_attachment(vault, "Sub/Note.md", &source, "attachments").unwrap();
+        assert_eq!(rel, "../attachments/source.png");
+        assert!(vault.join("attachments/source.png").is_file());
+    }
+
+    #[test]
+    fn import_attachment_dedupes_names_and_sanitizes() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        let source = vault.join("my photo (1).png");
+        fs::write(&source, b"fake").unwrap();
+
+        let first = import_attachment(vault, "Note.md", &source, "attachments").unwrap();
+        let second = import_attachment(vault, "Note.md", &source, "attachments").unwrap();
+        assert_eq!(first, "attachments/my_photo__1_.png");
+        assert_eq!(second, "attachments/my_photo__1_-1.png");
+    }
+
+    #[test]
+    fn resolve_image_path_handles_relative_and_external() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path();
+        fs::create_dir_all(vault.join("Sub")).unwrap();
+        fs::write(vault.join("pic.png"), b"x").unwrap();
+
+        // Relative to the note's folder.
+        assert_eq!(
+            resolve_image_path(vault, "Sub/Note.md", "../pic.png", "attachments"),
+            Some(vault.join("Sub/../pic.png"))
+        );
+        // External URLs are not resolved.
+        assert_eq!(
+            resolve_image_path(vault, "Note.md", "https://x.dev/a.png", "attachments"),
+            None
+        );
+        // file:// prefix and percent-encoding are decoded.
+        let decoded = resolve_image_path(vault, "Note.md", "file:///tmp/a%20b.png", "attachments");
+        assert_eq!(decoded, Some(PathBuf::from("/tmp/a b.png")));
     }
 }
