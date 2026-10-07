@@ -152,6 +152,10 @@ export component AppWindow inherits Window {
     callback request-insert(string, string, int) -> EditResult;
     // Files (images) dropped onto the editor.
     callback files-dropped(data-transfer);
+    // Format selection (kind, content, cursor, anchor) -> result
+    callback format-selection(string, string, int, int) -> EditResult;
+    // Paste image from clipboard: returns markdown to insert at cursor, or empty if no image.
+    callback paste-image-requested(string, int) -> EditResult;
 
     // Markdown editing assistance (implemented in Rust, never in rustidian-core)
     callback handle-edit-key(string, bool, bool, bool, string, int, int) -> EditResult;
@@ -656,6 +660,12 @@ export component AppWindow inherits Window {
                     pending-insert <=> root.editor-insert;
                     content-changed(t) => { root.content-changed(t); }
                     files-dropped(data) => { root.files-dropped(data); }
+                    format-selection(kind, content, cursor, anchor) => {
+                        return root.format-selection(kind, content, cursor, anchor);
+                    }
+                    paste-image-requested(content, cursor) => {
+                        return root.paste-image-requested(content, cursor);
+                    }
                     request-insert(insert, content, cursor) => {
                         return root.request-insert(insert, content, cursor);
                     }

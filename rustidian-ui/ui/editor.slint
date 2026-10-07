@@ -14,6 +14,9 @@ export component Editor inherits Rectangle {
     // When set to a non-empty string, it is spliced in at the caret (via
     // `request-insert`) and then cleared.  Used to insert images.
     in-out property <string> pending-insert: "";
+    // Exposed cursor/anchor for context menu and formatting.
+    in-out property <int> cursor-pos: 0;
+    in-out property <int> anchor-pos: 0;
 
     callback content-changed(string);
     // (key-text, ctrl, shift, alt, content, cursor, anchor) -> result
@@ -23,8 +26,12 @@ export component Editor inherits Rectangle {
     callback update-suggestions(string, int);
     // (insert-text, content, cursor) -> result — splice text at the caret.
     callback request-insert(string, string, int) -> EditResult;
+    // Format selection with bold/italic/code/codeblock (kind, content, cursor, anchor) -> result
+    callback format-selection(string, string, int, int) -> EditResult;
     // A drag-and-drop payload was dropped on the editor (may carry files).
     callback files-dropped(data-transfer);
+    // Paste image from clipboard: returns markdown to insert at cursor, or empty if no image.
+    callback paste-image-requested(string, int) -> EditResult;
 
     changed pending-insert => {
         if (root.pending-insert != "") {
@@ -72,12 +79,70 @@ export component Editor inherits Rectangle {
             selection-foreground-color: Palette.bg;
             text <=> root.content;
 
+            // Keep cursor/anchor properties in sync for context menu access.
             edited => {
+                root.cursor-pos = self.cursor-position-byte-offset;
+                root.anchor-pos = self.anchor-position-byte-offset;
                 root.content-changed(self.text);
                 root.update-suggestions(self.text, self.cursor-position-byte-offset);
             }
 
             key-pressed(event) => {
+                // ── Formatting shortcuts ──────────────────────────────────
+                if (event.modifiers.control && !event.modifiers.alt && event.text == "b") {
+                    let res = root.format-selection(
+                        "bold",
+                        self.text,
+                        self.cursor-position-byte-offset,
+                        self.anchor-position-byte-offset
+                    );
+                    if (res.handled) {
+                        self.text = res.text;
+                        self.set-selection-offsets(res.anchor, res.cursor);
+                        root.content-changed(self.text);
+                    }
+                    return accept;
+                }
+                if (event.modifiers.control && !event.modifiers.alt && event.text == "i") {
+                    let res = root.format-selection(
+                        "italic",
+                        self.text,
+                        self.cursor-position-byte-offset,
+                        self.anchor-position-byte-offset
+                    );
+                    if (res.handled) {
+                        self.text = res.text;
+                        self.set-selection-offsets(res.anchor, res.cursor);
+                        root.content-changed(self.text);
+                    }
+                    return accept;
+                }
+                if (event.modifiers.control && event.modifiers.shift && (event.text == "K" || event.text == "k")) {
+                    let res = root.format-selection(
+                        "codeblock",
+                        self.text,
+                        self.cursor-position-byte-offset,
+                        self.anchor-position-byte-offset
+                    );
+                    if (res.handled) {
+                        self.text = res.text;
+                        self.set-selection-offsets(res.anchor, res.cursor);
+                        root.content-changed(self.text);
+                    }
+                    return accept;
+                }
+                // ── Ctrl+V: try paste image, then fall through ─────────
+                if (event.modifiers.control && !event.modifiers.alt && (event.text == "v" || event.text == "V")) {
+                    let res = root.paste-image-requested(self.text, self.cursor-position-byte-offset);
+                    if (res.handled) {
+                        self.text = res.text;
+                        self.set-selection-offsets(res.anchor, res.cursor);
+                        root.content-changed(self.text);
+                        return accept;
+                    }
+                    // No image in clipboard — fall through to native paste
+                }
+                // ── Normal editing assistance ───────────────────────────
                 if (!event.modifiers.control && !event.modifiers.alt && event.text != "") {
                     let res = root.handle-edit-key(
                         event.text,
@@ -109,6 +174,84 @@ export component Editor inherits Rectangle {
         dropped(event) => {
             root.files-dropped(event.data);
             return DragAction.copy;
+        }
+    }
+
+    // ── Right-click context menu ─────────────────────────────────────────────
+    context-area := ContextMenuArea {
+        width: parent.width;
+        height: parent.height;
+
+        Menu {
+            MenuItem {
+                title: "Copy";
+                activated => { /* Slint TextInput handles Ctrl+C natively */ }
+            }
+            MenuItem {
+                title: "Cut";
+                activated => { /* Slint TextInput handles Ctrl+X natively */ }
+            }
+            MenuItem {
+                title: "Paste";
+                activated => { /* Slint TextInput handles Ctrl+V natively */ }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Bold";
+                activated => {
+                    let res = root.format-selection(
+                        "bold",
+                        root.content,
+                        root.cursor-pos,
+                        root.anchor-pos
+                    );
+                    if (res.handled) {
+                        root.content = res.text;
+                    }
+                }
+            }
+            MenuItem {
+                title: "Italic";
+                activated => {
+                    let res = root.format-selection(
+                        "italic",
+                        root.content,
+                        root.cursor-pos,
+                        root.anchor-pos
+                    );
+                    if (res.handled) {
+                        root.content = res.text;
+                    }
+                }
+            }
+            MenuItem {
+                title: "Inline Code";
+                activated => {
+                    let res = root.format-selection(
+                        "code",
+                        root.content,
+                        root.cursor-pos,
+                        root.anchor-pos
+                    );
+                    if (res.handled) {
+                        root.content = res.text;
+                    }
+                }
+            }
+            MenuItem {
+                title: "Code Block";
+                activated => {
+                    let res = root.format-selection(
+                        "codeblock",
+                        root.content,
+                        root.cursor-pos,
+                        root.anchor-pos
+                    );
+                    if (res.handled) {
+                        root.content = res.text;
+                    }
+                }
+            }
         }
     }
 

@@ -206,6 +206,88 @@ fn continue_list(content: &str, cursor: usize) -> Option<(String, usize)> {
     }
 }
 
+/// Wrap or unwrap a selection with markdown delimiters.
+/// `kind` is one of: "bold", "italic", "code", "codeblock"
+pub fn format_selection(
+    content: &str,
+    cursor: i32,
+    anchor: i32,
+    kind: &str,
+) -> EditResult {
+    let cur = clamp(cursor, content);
+    let anc = clamp(anchor, content);
+    if cur == anc {
+        // No selection — insert empty markers at cursor
+        let (open, close) = match kind {
+            "bold" => ("****", 2),
+            "italic" => ("__", 1),
+            "code" => ("``", 1),
+            "codeblock" => ("```\n\n```", 4),
+            _ => ("", 0),
+        };
+        let mut out = String::with_capacity(content.len() + open.len());
+        out.push_str(&content[..cur]);
+        out.push_str(open);
+        out.push_str(&content[cur..]);
+        return handled(out, cur + close);
+    }
+
+    let (start, end) = if cur < anc { (cur, anc) } else { (anc, cur) };
+    let selected = &content[start..end];
+
+    let (open, close) = match kind {
+        "bold" => {
+            // Toggle: if already wrapped, unwrap; otherwise wrap
+            if selected.starts_with("**") && selected.ends_with("**") {
+                let inner = &selected[2..selected.len() - 2];
+                let new_text = format!("{}{}{}", &content[..start], inner, &content[end..]);
+                return handled(new_text, start + inner.len());
+            }
+            ("**", "**")
+        }
+        "italic" => {
+            if selected.starts_with("*") && selected.ends_with("*") && !selected.starts_with("**") {
+                let inner = &selected[1..selected.len() - 1];
+                let new_text = format!("{}{}{}", &content[..start], inner, &content[end..]);
+                return handled(new_text, start + inner.len());
+            }
+            ("*", "*")
+        }
+        "code" => {
+            if selected.starts_with('`') && selected.ends_with('`') && !selected.starts_with("``") {
+                let inner = &selected[1..selected.len() - 1];
+                let new_text = format!("{}{}{}", &content[..start], inner, &content[end..]);
+                return handled(new_text, start + inner.len());
+            }
+            ("`", "`")
+        }
+        "codeblock" => {
+            if selected.starts_with("```") && selected.ends_with("```") {
+                // Unwrap: strip the opening ```lang\n and closing ```
+                let inner = if let Some(first_nl) = selected.find('\n') {
+                    &selected[first_nl + 1..selected.len() - 3]
+                } else {
+                    &selected[3..selected.len() - 3]
+                };
+                let new_text = format!("{}{}{}", &content[..start], inner, &content[end..]);
+                return handled(new_text, start + inner.len());
+            }
+            ("```\n", "\n```")
+        }
+        _ => ("", ""),
+    };
+
+    let new_text = format!(
+        "{}{}{}{}{}",
+        &content[..start],
+        open,
+        selected,
+        close,
+        &content[end..]
+    );
+    handled(new_text, end + open.len() + close.len())
+}
+
 fn auto_pair(key: &str, content: &str, cursor: usize, anchor: usize) -> Option<(String, usize)> {
     // Closing brackets are typed over so the auto-inserted pair isn't doubled.
     if key == "]" {
@@ -363,5 +445,41 @@ mod tests {
         let (s, show) = suggestions("[[al", 4, &titles);
         assert!(show);
         assert_eq!(s, vec!["Alpha".to_owned()]);
+    }
+
+    #[test]
+    fn format_selection_bold_wraps() {
+        let res = format_selection("hello world", 0, 11, "bold");
+        assert!(res.handled);
+        assert_eq!(text(&res), "**hello world**");
+    }
+
+    #[test]
+    fn format_selection_bold_unwraps() {
+        let res = format_selection("**hello**", 0, 9, "bold");
+        assert!(res.handled);
+        assert_eq!(text(&res), "hello");
+    }
+
+    #[test]
+    fn format_selection_codeblock_wraps() {
+        let res = format_selection("echo hi", 0, 7, "codeblock");
+        assert!(res.handled);
+        assert_eq!(text(&res), "```\necho hi\n```");
+    }
+
+    #[test]
+    fn format_selection_codeblock_unwraps() {
+        let res = format_selection("```\necho hi\n```", 0, 15, "codeblock");
+        assert!(res.handled);
+        assert_eq!(text(&res), "echo hi\n");
+    }
+
+    #[test]
+    fn format_selection_no_selection_inserts_empty() {
+        let res = format_selection("hello", 2, 2, "bold");
+        assert!(res.handled);
+        assert_eq!(text(&res), "he****llo");
+        assert_eq!(res.cursor, 4);
     }
 }

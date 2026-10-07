@@ -47,6 +47,10 @@ ureq = "2"
 sha2 = "0.10"
 self-replace = "1"
 serde_json = "1"
+# Clipboard access for pasting images from the system clipboard.
+arboard = "3"
+# Compute relative paths for image markdown references.
+pathdiff = "0.2"
 
 [build-dependencies]
 slint-build = "1.18"

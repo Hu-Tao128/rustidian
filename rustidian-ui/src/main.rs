@@ -3,6 +3,7 @@ mod editor_assist;
 mod update;
 mod worker;
 
+use arboard::Clipboard;
 use bridge::{blocks_to_items, to_backlink_items, tree_to_rows};
 use rustidian_core::config::Config;
 use rustidian_core::links::normalise;
@@ -1129,6 +1130,95 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Splice the generated Markdown at the caret inside the editor.
         ui.on_request_insert(|insert, content, cursor| {
             editor_assist::insert_at(content.as_str(), cursor, insert.as_str())
+        });
+    }
+
+    // ── Formatting shortcuts (Ctrl+B, Ctrl+I, Ctrl+Shift+K) ──────────────────
+    {
+        ui.on_format_selection(|kind, content, cursor, anchor| {
+            editor_assist::format_selection(content.as_str(), cursor, anchor, kind.as_str())
+        });
+    }
+
+    // ── Paste image from clipboard (Ctrl+V) ──────────────────────────────────
+    {
+        let shared2 = Arc::clone(&shared);
+        let ui_weak = ui.as_weak();
+        ui.on_paste_image_requested(move |content, cursor| {
+            let mut result = EditResult {
+                handled: false,
+                text: content.clone(),
+                cursor,
+                anchor: cursor,
+            };
+
+            // Try to get image from clipboard using arboard
+            let clipboard_result = Clipboard::new().and_then(|mut clipboard| clipboard.get_image());
+            if let Ok(image_data) = clipboard_result {
+                let vault = shared2.lock().unwrap().vault_path.clone();
+                let (note_id, attachments) = {
+                    let ui = match ui_weak.upgrade() {
+                        Some(u) => u,
+                        None => return result,
+                    };
+                    (
+                        ui.get_current_note_id().to_string(),
+                        ui.get_attachment_folder().to_string(),
+                    )
+                };
+
+                // Generate a unique filename
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let filename = format!("pasted-{}.png", timestamp);
+
+                // Build attachment directory path
+                let vault_path = PathBuf::from(&vault);
+                let attach_dir = vault_path.join(&attachments);
+                let _ = std::fs::create_dir_all(&attach_dir);
+
+                // Save the image as PNG
+                let img_path = attach_dir.join(&filename);
+                let img = image::RgbaImage::from_raw(
+                    image_data.width as u32,
+                    image_data.height as u32,
+                    image_data.bytes.to_vec(),
+                );
+
+                if let Some(img) = img {
+                    if img.save(&img_path).is_ok() {
+                        // Build relative path for markdown
+                        let note_folder = vault::note_dir(&vault_path, &note_id);
+                        let rel_path =
+                            pathdiff::diff_paths(&img_path, &note_folder).unwrap_or(img_path);
+                        let rel = rel_path.to_string_lossy().replace('\\', "/");
+                        let mark = format!("\n![pasted-image]({rel})\n");
+
+                        // Clamp cursor and insert
+                        let cur = {
+                            let mut o = (cursor.max(0) as usize).min(content.len());
+                            while o > 0 && !content.is_char_boundary(o) {
+                                o -= 1;
+                            }
+                            o
+                        };
+                        let mut out = String::with_capacity(content.len() + mark.len());
+                        out.push_str(&content[..cur]);
+                        out.push_str(&mark);
+                        out.push_str(&content[cur..]);
+                        result = EditResult {
+                            handled: true,
+                            text: out.into(),
+                            cursor: (cur + mark.len()) as i32,
+                            anchor: (cur + mark.len()) as i32,
+                        };
+                    }
+                }
+            }
+
+            result
         });
     }
 
