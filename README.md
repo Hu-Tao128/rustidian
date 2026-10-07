@@ -48,6 +48,7 @@ build it yourself? See [Building](#building).
 - **Persistent config** — vault path, theme and open tabs saved to `~/.config/rustidian/config.toml`
 - **Incremental link indexing** — saving re-indexes only the edited note and the preview is debounced, instead of rescanning the vault on every keystroke
 - **Optional graph view** — force-directed layout behind a Cargo feature flag; the default binary never compiles or loads `petgraph`
+- **Images** — `![alt](path)` in a paragraph of its own renders as a scaled-down thumbnail (kept small in memory); click it to open the full-quality image in a zoom modal and save a copy. Insert from the toolbar (**Image…**) or by dropping image files; attachments are copied into the vault's `attachments/` folder
 
 ---
 
@@ -254,6 +255,7 @@ rustidian/
 | Config file | `~/.config/rustidian/config.toml` |
 | Theme | `dark_mode = true` (Mocha) / `false` (Latte) |
 | Updates | `check_updates = false` — check automatically on startup |
+| Attachments | `attachment_folder = "attachments"` — where inserted images are copied |
 
 Example `config.toml`:
 
@@ -261,6 +263,7 @@ Example `config.toml`:
 vault_path = "/home/user/Notes"
 dark_mode = true
 check_updates = false
+attachment_folder = "attachments"
 ```
 
 ---
@@ -345,7 +348,7 @@ Use `vault-ejemplo/` for development — never point a dev build at your real no
 
 - **Renaming or moving a note — or renaming/deleting a folder that contains notes — breaks existing `[[links]]`** — same behaviour as Obsidian without the "update links on rename" plugin. Tracked as a future improvement (stable IDs via YAML frontmatter).
 - **Dropping a note onto a folder where a note with the same name already exists is rejected** — Rustidian shows an error instead of overwriting.
-- **Images in the preview are shown as labelled links** — Slint's `StyledText` has no inline image support, so `![alt](url)` renders as a clickable `🖼 alt` link.
+- **Inline images fall back to links** — a paragraph that contains only an image renders as a clickable thumbnail, but an image mixed with surrounding text still shows as a labelled link, because Slint's `StyledText` has no inline image support.
 - **The graph view is opt-in** — build with `--features graph` on machines that can afford the layout calculation.
 
 ---
