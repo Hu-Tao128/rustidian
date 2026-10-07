@@ -364,12 +364,14 @@ export component Sidebar inherits Rectangle {
                                 spacing: 4px;
                                 alignment: start;
 
-                                Text {
-                                    text: row.expanded ? "▾" : "▸";
-                                    color: Palette.text-muted;
-                                    font-size: 11px;
-                                    vertical-alignment: center;
+                                Image {
+                                    source: row.expanded
+                                        ? @image-url("icons/chevron-down.svg")
+                                        : @image-url("icons/chevron-right.svg");
                                     width: 12px;
+                                    height: 12px;
+                                    vertical-alignment: center;
+                                    colorize: Palette.text-muted;
                                 }
 
                                 Text {
@@ -609,9 +611,17 @@ export component Sidebar inherits Rectangle {
 
                 HorizontalBox {
                     padding-left: 8px;
+                    spacing: 4px;
                     alignment: start;
+                    Image {
+                        source: @image-url("icons/arrow-left.svg");
+                        width: 12px;
+                        height: 12px;
+                        vertical-alignment: center;
+                        colorize: Palette.accent;
+                    }
                     Text {
-                        text: "← " + bl.title;
+                        text: bl.title;
                         color: Palette.accent;
                         font-size: 12px;
                         vertical-alignment: center;
