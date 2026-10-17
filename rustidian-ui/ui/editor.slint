@@ -88,6 +88,14 @@ export component Editor inherits Rectangle {
             }
 
             key-pressed(event) => {
+                // ── Navigation shortcuts (let native TextInput handle them) ─
+                // These must return `reject` so the TextInput processes them natively.
+                if (event.text == "PageUp" || event.text == "PageDown"
+                    || event.text == "Home" || event.text == "End"
+                    || event.text == "Left" || event.text == "Right"
+                    || event.text == "Up" || event.text == "Down") {
+                    return reject;
+                }
                 // ── Formatting shortcuts ──────────────────────────────────
                 if (event.modifiers.control && !event.modifiers.alt && event.text == "b") {
                     let res = root.format-selection(

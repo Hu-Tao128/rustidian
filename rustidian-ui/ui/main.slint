@@ -316,70 +316,77 @@ export component AppWindow inherits Window {
                     background: Palette.border;
                 }
 
-                HorizontalBox {
-                    padding: 0px;
-                    spacing: 0px;
-                    alignment: start;
+                // Scrollable container for tabs when they overflow
+                tabs-scroll := Flickable {
+                    width: parent.width;
+                    height: 36px;
+                    interactive: self.width < tabs-layout.preferred-width;
 
-                    for tab in root.open-tabs: Rectangle {
-                        width: tab-inner.preferred-width + 32px;
-                        height: parent.height;
-                        background: tab.id == root.current-note-id ? Palette.card : transparent;
+                    tabs-layout := HorizontalBox {
+                        padding: 0px;
+                        spacing: 0px;
+                        alignment: start;
 
-                        Rectangle {
-                            y: parent.height - 2px;
-                            height: 2px;
-                            width: parent.width;
-                            background: tab.id == root.current-note-id ? Palette.accent : transparent;
-                        }
+                        for tab in root.open-tabs: Rectangle {
+                            width: tab-inner.preferred-width + 32px;
+                            height: 36px;
+                            background: tab.id == root.current-note-id ? Palette.card : transparent;
 
-                        tab-touch := TouchArea {
-                            width: parent.width;
-                            height: parent.height;
-                            mouse-cursor: pointer;
-                            clicked => { root.note-selected(tab.id); }
-                        }
-
-                        if tab-touch.has-hover && tab.id != root.current-note-id: Rectangle {
-                            background: Palette.card;
-                            width: parent.width;
-                            height: parent.height;
-                        }
-
-                        HorizontalBox {
-                            padding-left: 10px;
-                            padding-right: 4px;
-                            spacing: 4px;
-                            alignment: center;
-
-                            tab-inner := Text {
-                                text: (tab.unsaved ? "● " : "") + tab.title;
-                                color: tab.id == root.current-note-id ? Palette.text : Palette.text-muted;
-                                font-size: 13px;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                max-width: 160px;
+                            Rectangle {
+                                y: parent.height - 2px;
+                                height: 2px;
+                                width: parent.width;
+                                background: tab.id == root.current-note-id ? Palette.accent : transparent;
                             }
 
-                            close-touch := TouchArea {
-                                width: 18px;
-                                height: 18px;
+                            tab-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
                                 mouse-cursor: pointer;
-                                clicked => { root.tab-closed(tab.id); }
+                                clicked => { root.note-selected(tab.id); }
+                            }
 
-                                Rectangle {
-                                    background: close-touch.has-hover ? Palette.card : transparent;
-                                    border-radius: 3px;
-                                    width: parent.width;
-                                    height: parent.height;
+                            if tab-touch.has-hover && tab.id != root.current-note-id: Rectangle {
+                                background: Palette.card;
+                                width: parent.width;
+                                height: parent.height;
+                            }
 
-                                    Image {
-                                        source: @image-url("icons/close.svg");
-                                        width: 12px;
-                                        height: 12px;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
-                                        colorize: close-touch.has-hover ? Palette.danger : Palette.text-muted;
+                            HorizontalBox {
+                                padding-left: 10px;
+                                padding-right: 4px;
+                                spacing: 4px;
+                                alignment: center;
+
+                                tab-inner := Text {
+                                    text: (tab.unsaved ? "● " : "") + tab.title;
+                                    color: tab.id == root.current-note-id ? Palette.text : Palette.text-muted;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    max-width: 160px;
+                                }
+
+                                close-touch := TouchArea {
+                                    width: 18px;
+                                    height: 18px;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.tab-closed(tab.id); }
+
+                                    Rectangle {
+                                        background: close-touch.has-hover ? Palette.card : transparent;
+                                        border-radius: 3px;
+                                        width: parent.width;
+                                        height: parent.height;
+
+                                        Image {
+                                            source: @image-url("icons/close.svg");
+                                            width: 12px;
+                                            height: 12px;
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            colorize: close-touch.has-hover ? Palette.danger : Palette.text-muted;
+                                        }
                                     }
                                 }
                             }
