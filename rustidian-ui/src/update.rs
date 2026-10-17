@@ -152,8 +152,18 @@ pub fn download_and_apply(info: &UpdateInfo) -> Result<(), String> {
         .ok_or("ruta de ejecutable inválida")?
         .to_path_buf();
     let tmp = dir.join(".rustidian-ui.update");
-    std::fs::write(&tmp, &bytes)
-        .map_err(|e| format!("no se pudo escribir la actualización (¿permisos?): {e}"))?;
+
+    // Try writing to the installation directory first.
+    if let Err(e) = std::fs::write(&tmp, &bytes) {
+        // Installation directory is not writable.
+        return Err(format!(
+            "no se pudo escribir la actualización (permisos?): {}\n\n\
+             Soluciones:\n\
+             1. Ejecuta con sudo: sudo rustidian-ui --update\n\
+             2. O reinstala en ~/.local/bin con: curl -sSf https://raw.githubusercontent.com/Hu-Tao128/rustidian/main/install.sh | bash",
+            e
+        ));
+    }
 
     #[cfg(unix)]
     {
