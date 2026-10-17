@@ -23,16 +23,39 @@ assets = [
 ]
 
 # ── Fedora / RHEL packaging (cargo-generate-rpm) ─────────────────────────────
+# auto-req = "no": la detección automática corre `ldd` y arrastra la clausura
+# transitiva completa del sistema donde se compila. En un host Debian/Ubuntu
+# eso produce Requires como `libbz2.so.1.0()(64bit)`, que Fedora no
+# proporciona (allí la libbz2 de bzip2-libs es `libbz2.so.1`), y `dnf install`
+# falla con "nothing provides libbz2.so.1.0()(64bit)". Declaramos a mano las
+# dependencias de runtime, que no dependen del host de compilación.
 [package.metadata.generate-rpm]
 name = "rustidian"
 summary = "Ultralight Markdown note editor"
 license = "MIT"
+auto-req = "no"
+require-sh = false
 assets = [
     { source = "target/release/rustidian-ui", dest = "/usr/bin/rustidian-ui", mode = "755" },
     { source = "packaging/rustidian.desktop", dest = "/usr/share/applications/rustidian.desktop", mode = "644" },
     { source = "packaging/rustidian.svg", dest = "/usr/share/icons/hicolor/scalable/apps/rustidian.svg", mode = "644" },
     { source = "packaging/rustidian-white.svg", dest = "/usr/share/icons/hicolor/scalable/apps/rustidian-white.svg", mode = "644" },
 ]
+
+# Dependencias de runtime (equivalentes a las del .deb):
+#   glibc, libgcc   → enlazado C (libc/libm/ld-linux, libgcc_s)
+#   gtk3, glib2     → GTK3 (selector de carpetas de rfd) y GLib
+#   fontconfig      → enumeración de fuentes de Slint
+#   libxkbcommon(-x11) → los carga winit en runtime vía dlopen, por eso no
+#     aparecen como dependencias ELF y hay que declararlos explícitamente.
+[package.metadata.generate-rpm.requires]
+glibc = "*"
+libgcc = "*"
+gtk3 = "*"
+glib2 = "*"
+fontconfig = "*"
+libxkbcommon = "*"
+libxkbcommon-x11 = "*"
 
 [dependencies]
 rustidian-core = { path = "../rustidian-core" }

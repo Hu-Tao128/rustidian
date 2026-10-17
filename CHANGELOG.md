@@ -90,6 +90,16 @@ All notable changes to Rustidian are documented here.
   rescanning the whole vault, and the preview is debounced (80 ms) instead of
   re-parsing the Markdown on every keystroke.
 
+### Fixed
+
+- **Fedora/RHEL `.rpm` failed to install** with `nothing provides
+  libbz2.so.1.0()(64bit)`. The automatic dependency detection of
+  `cargo-generate-rpm` uses `ldd` and embeds the transitive closure of the
+  *build* host, so building on Debian/Ubuntu produced a `libbz2.so.1.0` name
+  that Fedora does not provide. The RPM now declares its runtime dependencies
+  explicitly (`auto-req = "no"`), so `dnf install ./rustidian-<version>.rpm`
+  resolves regardless of where it was built.
+
 ## [0.1.0]
 
 - Initial prototype: note CRUD, autosave, wikilinks, backlinks, full-text
