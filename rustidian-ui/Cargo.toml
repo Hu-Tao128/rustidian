@@ -1,6 +1,6 @@
 [package]
 name = "rustidian-ui"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Ultralight Markdown note editor built with Rust and Slint."
 license = "MIT"
