@@ -64,111 +64,124 @@ export component Editor inherits Rectangle {
             background: Palette.border;
         }
 
-        input := TextInput {
-            x: 13px;
-            y: 12px;
-            width: parent.width - 26px;
-            height: parent.height - 24px;
-            wrap: word-wrap;
-            font-size: 14px;
-            font-family: "monospace";
-            color: Palette.text;
-            single-line: false;
-            selection-background-color: Palette.accent;
-            selection-foreground-color: Palette.bg;
-            text <=> root.content;
+        // Scrollable editor area
+        editor-scroll := ScrollView {
+            x: 1px;
+            y: 0px;
+            width: parent.width - 1px;
+            height: parent.height;
 
-            // Keep cursor/anchor properties in sync for context menu access.
-            edited => {
-                root.cursor-pos = self.cursor-position-byte-offset;
-                root.anchor-pos = self.anchor-position-byte-offset;
-                root.content-changed(self.text);
-                root.update-suggestions(self.text, self.cursor-position-byte-offset);
-            }
+            editor-inner := Rectangle {
+                width: editor-scroll.visible-width;
+                height: max(editor-scroll.visible-height, input.preferred-height + 24px);
+                background: transparent;
 
-            key-pressed(event) => {
-                // ── Navigation shortcuts (let native TextInput handle them) ─
-                // These must return `reject` so the TextInput processes them natively.
-                if (event.text == "PageUp" || event.text == "PageDown"
-                    || event.text == "Home" || event.text == "End"
-                    || event.text == "Left" || event.text == "Right"
-                    || event.text == "Up" || event.text == "Down") {
-                    return reject;
-                }
-                // ── Formatting shortcuts ──────────────────────────────────
-                if (event.modifiers.control && !event.modifiers.alt && event.text == "b") {
-                    let res = root.format-selection(
-                        "bold",
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
+                input := TextInput {
+                    x: 12px;
+                    y: 12px;
+                    width: parent.width - 24px;
+                    wrap: word-wrap;
+                    font-size: 14px;
+                    font-family: "monospace";
+                    color: Palette.text;
+                    single-line: false;
+                    selection-background-color: Palette.accent;
+                    selection-foreground-color: Palette.bg;
+                    text <=> root.content;
+
+                    // Keep cursor/anchor properties in sync for context menu access.
+                    edited => {
+                        root.cursor-pos = self.cursor-position-byte-offset;
+                        root.anchor-pos = self.anchor-position-byte-offset;
                         root.content-changed(self.text);
+                        root.update-suggestions(self.text, self.cursor-position-byte-offset);
                     }
-                    return accept;
-                }
-                if (event.modifiers.control && !event.modifiers.alt && event.text == "i") {
-                    let res = root.format-selection(
-                        "italic",
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
+
+                    key-pressed(event) => {
+                        // ── Navigation shortcuts (let native TextInput handle them) ─
+                        // These must return `reject` so the TextInput processes them natively.
+                        if (event.text == "PageUp" || event.text == "PageDown"
+                            || event.text == "Home" || event.text == "End"
+                            || event.text == "Left" || event.text == "Right"
+                            || event.text == "Up" || event.text == "Down") {
+                            return reject;
+                        }
+                        // ── Formatting shortcuts ──────────────────────────────────
+                        if (event.modifiers.control && !event.modifiers.alt && event.text == "b") {
+                            let res = root.format-selection(
+                                "bold",
+                                self.text,
+                                self.cursor-position-byte-offset,
+                                self.anchor-position-byte-offset
+                            );
+                            if (res.handled) {
+                                self.text = res.text;
+                                self.set-selection-offsets(res.anchor, res.cursor);
+                                root.content-changed(self.text);
+                            }
+                            return accept;
+                        }
+                        if (event.modifiers.control && !event.modifiers.alt && event.text == "i") {
+                            let res = root.format-selection(
+                                "italic",
+                                self.text,
+                                self.cursor-position-byte-offset,
+                                self.anchor-position-byte-offset
+                            );
+                            if (res.handled) {
+                                self.text = res.text;
+                                self.set-selection-offsets(res.anchor, res.cursor);
+                                root.content-changed(self.text);
+                            }
+                            return accept;
+                        }
+                        if (event.modifiers.control && event.modifiers.shift && (event.text == "K" || event.text == "k")) {
+                            let res = root.format-selection(
+                                "codeblock",
+                                self.text,
+                                self.cursor-position-byte-offset,
+                                self.anchor-position-byte-offset
+                            );
+                            if (res.handled) {
+                                self.text = res.text;
+                                self.set-selection-offsets(res.anchor, res.cursor);
+                                root.content-changed(self.text);
+                            }
+                            return accept;
+                        }
+                        // ── Ctrl+V: try paste image, then fall through ─────────
+                        if (event.modifiers.control && !event.modifiers.alt && (event.text == "v" || event.text == "V")) {
+                            let res = root.paste-image-requested(self.text, self.cursor-position-byte-offset);
+                            if (res.handled) {
+                                self.text = res.text;
+                                self.set-selection-offsets(res.anchor, res.cursor);
+                                root.content-changed(self.text);
+                                return accept;
+                            }
+                            // No image in clipboard — fall through to native paste
+                        }
+                        // ── Normal editing assistance ───────────────────────────
+                        if (!event.modifiers.control && !event.modifiers.alt && event.text != "") {
+                            let res = root.handle-edit-key(
+                                event.text,
+                                event.modifiers.control,
+                                event.modifiers.shift,
+                                event.modifiers.alt,
+                                self.text,
+                                self.cursor-position-byte-offset,
+                                self.anchor-position-byte-offset
+                            );
+                            if (res.handled) {
+                                self.text = res.text;
+                                self.set-selection-offsets(res.anchor, res.cursor);
+                                root.content-changed(self.text);
+                                root.update-suggestions(self.text, res.cursor);
+                                return accept;
+                            }
+                        }
+                        reject
                     }
-                    return accept;
                 }
-                if (event.modifiers.control && event.modifiers.shift && (event.text == "K" || event.text == "k")) {
-                    let res = root.format-selection(
-                        "codeblock",
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
-                    }
-                    return accept;
-                }
-                // ── Ctrl+V: try paste image, then fall through ─────────
-                if (event.modifiers.control && !event.modifiers.alt && (event.text == "v" || event.text == "V")) {
-                    let res = root.paste-image-requested(self.text, self.cursor-position-byte-offset);
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
-                        return accept;
-                    }
-                    // No image in clipboard — fall through to native paste
-                }
-                // ── Normal editing assistance ───────────────────────────
-                if (!event.modifiers.control && !event.modifiers.alt && event.text != "") {
-                    let res = root.handle-edit-key(
-                        event.text,
-                        event.modifiers.control,
-                        event.modifiers.shift,
-                        event.modifiers.alt,
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
-                        root.update-suggestions(self.text, res.cursor);
-                        return accept;
-                    }
-                }
-                reject
             }
         }
     }
