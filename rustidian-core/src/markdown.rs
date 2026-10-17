@@ -29,6 +29,7 @@ pub enum Block {
     Paragraph(Vec<Inline>),
     List {
         ordered: bool,
+        start: u64,
         items: Vec<Vec<Block>>,
     },
     TaskList(Vec<(bool, Vec<Inline>)>),
@@ -57,6 +58,7 @@ enum Frame {
     },
     List {
         ordered: bool,
+        start: u64,
         items: Vec<Vec<Block>>,
         tasks: Vec<(bool, Vec<Inline>)>,
         pending: Vec<Inline>,
@@ -177,6 +179,7 @@ fn start_tag(stack: &mut Vec<Frame>, tag: Tag<'_>) {
         }
         Tag::List(first) => stack.push(Frame::List {
             ordered: first.is_some(),
+            start: first.unwrap_or(1),
             items: Vec::new(),
             tasks: Vec::new(),
             pending: Vec::new(),
@@ -274,13 +277,14 @@ fn end_tag(stack: &mut Vec<Frame>, tag: TagEnd) {
         TagEnd::List(_) => {
             if let Some(Frame::List {
                 ordered,
+                start,
                 items,
                 tasks,
                 ..
             }) = stack.pop()
             {
                 if tasks.is_empty() {
-                    push_block(stack, Block::List { ordered, items });
+                    push_block(stack, Block::List { ordered, start, items });
                 } else {
                     push_block(stack, Block::TaskList(tasks));
                 }
@@ -793,7 +797,7 @@ mod tests {
     fn unordered_list_parsed() {
         let blocks = parse_blocks("- a\n- b");
         match &blocks[0] {
-            Block::List { ordered, items } => {
+            Block::List { ordered, items, .. } => {
                 assert!(!ordered);
                 assert_eq!(items.len(), 2);
                 assert_eq!(
@@ -809,7 +813,7 @@ mod tests {
     fn ordered_list_parsed() {
         let blocks = parse_blocks("1. first\n2. second");
         match &blocks[0] {
-            Block::List { ordered, items } => {
+            Block::List { ordered, items, .. } => {
                 assert!(ordered);
                 assert_eq!(items.len(), 2);
             }

@@ -232,10 +232,10 @@ fn push_blocks(blocks: &[Block], depth: i32, ctx: &ImgCtx, out: &mut Vec<BlockIt
                 item.markup = styled(inlines);
                 out.push(item);
             }
-            Block::List { ordered, items } => {
+            Block::List { ordered, start, items } => {
                 for (index, item_blocks) in items.iter().enumerate() {
                     let marker = if *ordered {
-                        format!("{}.", index + 1)
+                        format!("{}.", start + index as u64)
                     } else {
                         "•".to_owned()
                     };

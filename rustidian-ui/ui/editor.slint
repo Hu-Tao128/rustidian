@@ -49,27 +49,26 @@ export component Editor inherits Rectangle {
         }
     }
 
-    // Left border — visual separator
-    Rectangle {
-        x: 0px;
-        y: 0px;
-        width: 1px;
+    // Editor content area
+    editor-bg := Rectangle {
+        width: parent.width;
         height: parent.height;
-        background: Palette.border;
-    }
+        background: Palette.bg;
 
-    scroll := ScrollView {
-        x: 1px;
-        y: 0px;
-        width: parent.width - 1px;
-        height: parent.height;
-        content-width: self.visible-width;
-        content-height: max(self.visible-height, input.preferred-height + 24px);
+        // Left border — visual separator
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 1px;
+            height: parent.height;
+            background: Palette.border;
+        }
 
         input := TextInput {
-            x: 12px;
+            x: 13px;
             y: 12px;
-            width: scroll.visible-width - 24px;
+            width: parent.width - 26px;
+            height: parent.height - 24px;
             wrap: word-wrap;
             font-size: 14px;
             font-family: "monospace";
