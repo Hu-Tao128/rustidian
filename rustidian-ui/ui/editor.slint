@@ -96,7 +96,7 @@ export component Editor inherits Rectangle {
                     return reject;
                 }
                 // ── Tab: accept suggestion or insert 2 spaces ─────────────
-                if (event.text == "Tab") {
+                if (event.text == "\u{9}") {
                     if (root.show-suggestions && root.suggestions.length > 0) {
                         let res = root.accept-suggestion(
                             root.suggestions[0],
