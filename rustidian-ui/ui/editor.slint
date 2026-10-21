@@ -95,6 +95,30 @@ export component Editor inherits Rectangle {
                     || event.text == "Up" || event.text == "Down") {
                     return reject;
                 }
+                // ── Tab: accept suggestion or insert 2 spaces ─────────────
+                if (event.text == "Tab") {
+                    if (root.show-suggestions && root.suggestions.length > 0) {
+                        let res = root.accept-suggestion(
+                            root.suggestions[0],
+                            self.text,
+                            self.cursor-position-byte-offset
+                        );
+                        if (res.handled) {
+                            self.text = res.text;
+                            self.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(self.text);
+                            root.update-suggestions(self.text, res.cursor);
+                        }
+                    } else {
+                        let res = root.request-insert("  ", self.text, self.cursor-position-byte-offset);
+                        if (res.handled) {
+                            self.text = res.text;
+                            self.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(self.text);
+                        }
+                    }
+                    return accept;
+                }
                 // ── Formatting shortcuts ──────────────────────────────────
                 if (event.modifiers.control && !event.modifiers.alt && event.text == "b") {
                     let res = root.format-selection(
