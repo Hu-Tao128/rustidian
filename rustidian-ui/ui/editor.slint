@@ -17,6 +17,11 @@ export component Editor inherits Rectangle {
     // Exposed cursor/anchor for context menu and formatting.
     in-out property <int> cursor-pos: 0;
     in-out property <int> anchor-pos: 0;
+    // Snapshot of cursor/anchor captured at right-click time so the context
+    // menu operates on the selection that existed *before* the TextInput lost
+    // focus.
+    in-out property <int> context-cursor: 0;
+    in-out property <int> context-anchor: 0;
 
     callback content-changed(string);
     // (key-text, ctrl, shift, alt, content, cursor, anchor) -> result
@@ -66,109 +71,157 @@ export component Editor inherits Rectangle {
         content-width: self.visible-width;
         content-height: max(self.visible-height, input.preferred-height + 24px);
 
-        input := TextInput {
-            x: 12px;
-            y: 12px;
-            width: scroll.visible-width - 24px;
-            wrap: word-wrap;
-            font-size: 14px;
-            font-family: "monospace";
-            color: Palette.text;
-            single-line: false;
-            selection-background-color: Palette.accent;
-            selection-foreground-color: Palette.bg;
-            text <=> root.content;
+        // Capture right-click on the editor area *before* the TextInput loses
+        // focus so the context menu operates on the real selection.
+        editor-touch := TouchArea {
+            width: scroll.visible-width;
+            height: max(scroll.visible-height, input.preferred-height + 24px);
+            x: 0px;
+            y: 0px;
 
-            // Keep cursor/anchor properties in sync for context menu access.
-            edited => {
-                root.cursor-pos = self.cursor-position-byte-offset;
-                root.anchor-pos = self.anchor-position-byte-offset;
-                root.content-changed(self.text);
-                root.update-suggestions(self.text, self.cursor-position-byte-offset);
+            pointer-event(ev) => {
+                if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.down) {
+                    // Snapshot cursor/anchor from the TextInput before it loses focus.
+                    root.context-cursor = input.cursor-position-byte-offset;
+                    root.context-anchor = input.anchor-position-byte-offset;
+                }
             }
 
-            key-pressed(event) => {
-                // ── Navigation shortcuts (let native TextInput handle them) ─
-                if (event.text == "PageUp" || event.text == "PageDown"
-                    || event.text == "Home" || event.text == "End"
-                    || event.text == "Left" || event.text == "Right"
-                    || event.text == "Up" || event.text == "Down") {
-                    return reject;
-                }
-                // ── Formatting shortcuts ──────────────────────────────────
-                if (event.modifiers.control && !event.modifiers.alt && event.text == "b") {
-                    let res = root.format-selection(
-                        "bold",
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
+            input := TextInput {
+                x: 12px;
+                y: 12px;
+                width: scroll.visible-width - 24px;
+                wrap: word-wrap;
+                font-size: 14px;
+                font-family: "monospace";
+                color: Palette.text;
+                single-line: false;
+                selection-background-color: Palette.accent;
+                selection-foreground-color: Palette.bg;
+                text <=> root.content;
+
+                // Keep cursor/anchor properties in sync for context menu access.
+                edited => {
+                    root.cursor-pos = self.cursor-position-byte-offset;
+                    root.anchor-pos = self.anchor-position-byte-offset;
+                    root.content-changed(self.text);
+                    // Don't update suggestions during an active selection (e.g.
+                    // Ctrl+Shift+arrow); showing a popup mid-selection can corrupt
+                    // the native TextInput state.
+                    if self.cursor-position-byte-offset == self.anchor-position-byte-offset {
+                        root.update-suggestions(self.text, self.cursor-position-byte-offset);
                     }
-                    return accept;
                 }
-                if (event.modifiers.control && !event.modifiers.alt && event.text == "i") {
-                    let res = root.format-selection(
-                        "italic",
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
+
+                key-pressed(event) => {
+                    // ── Navigation shortcuts (let native TextInput handle them) ─
+                    if (event.text == "PageUp" || event.text == "PageDown"
+                        || event.text == "Home" || event.text == "End"
+                        || event.text == "Left" || event.text == "Right"
+                        || event.text == "Up" || event.text == "Down") {
+                        return reject;
                     }
-                    return accept;
-                }
-                if (event.modifiers.control && event.modifiers.shift && (event.text == "K" || event.text == "k")) {
-                    let res = root.format-selection(
-                        "codeblock",
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
-                    }
-                    return accept;
-                }
-                // ── Ctrl+V: try paste image, then fall through ─────────
-                if (event.modifiers.control && !event.modifiers.alt && (event.text == "v" || event.text == "V")) {
-                    let res = root.paste-image-requested(self.text, self.cursor-position-byte-offset);
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
+                    // ── Tab: accept suggestion or insert 2 spaces ─────────────
+                    if (event.text == "Tab") {
+                        if (root.show-suggestions && root.suggestions.length > 0) {
+                            // Accept the first suggestion.
+                            let res = root.accept-suggestion(
+                                root.suggestions[0],
+                                self.text,
+                                self.cursor-position-byte-offset
+                            );
+                            if (res.handled) {
+                                self.text = res.text;
+                                self.set-selection-offsets(res.anchor, res.cursor);
+                                root.content-changed(self.text);
+                                root.update-suggestions(self.text, res.cursor);
+                            }
+                        } else {
+                            // No suggestions — insert 2 spaces for indentation.
+                            let res = root.request-insert("  ", self.text, self.cursor-position-byte-offset);
+                            if (res.handled) {
+                                self.text = res.text;
+                                self.set-selection-offsets(res.anchor, res.cursor);
+                                root.content-changed(self.text);
+                            }
+                        }
                         return accept;
                     }
-                    // No image in clipboard — fall through to native paste
-                }
-                // ── Normal editing assistance ───────────────────────────
-                if (!event.modifiers.control && !event.modifiers.alt && event.text != "") {
-                    let res = root.handle-edit-key(
-                        event.text,
-                        event.modifiers.control,
-                        event.modifiers.shift,
-                        event.modifiers.alt,
-                        self.text,
-                        self.cursor-position-byte-offset,
-                        self.anchor-position-byte-offset
-                    );
-                    if (res.handled) {
-                        self.text = res.text;
-                        self.set-selection-offsets(res.anchor, res.cursor);
-                        root.content-changed(self.text);
-                        root.update-suggestions(self.text, res.cursor);
+                    // ── Formatting shortcuts ──────────────────────────────────
+                    if (event.modifiers.control && !event.modifiers.alt && event.text == "b") {
+                        let res = root.format-selection(
+                            "bold",
+                            self.text,
+                            self.cursor-position-byte-offset,
+                            self.anchor-position-byte-offset
+                        );
+                        if (res.handled) {
+                            self.text = res.text;
+                            self.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(self.text);
+                        }
                         return accept;
                     }
+                    if (event.modifiers.control && !event.modifiers.alt && event.text == "i") {
+                        let res = root.format-selection(
+                            "italic",
+                            self.text,
+                            self.cursor-position-byte-offset,
+                            self.anchor-position-byte-offset
+                        );
+                        if (res.handled) {
+                            self.text = res.text;
+                            self.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(self.text);
+                        }
+                        return accept;
+                    }
+                    if (event.modifiers.control && event.modifiers.shift && (event.text == "K" || event.text == "k")) {
+                        let res = root.format-selection(
+                            "codeblock",
+                            self.text,
+                            self.cursor-position-byte-offset,
+                            self.anchor-position-byte-offset
+                        );
+                        if (res.handled) {
+                            self.text = res.text;
+                            self.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(self.text);
+                        }
+                        return accept;
+                    }
+                    // ── Ctrl+V: try paste image, then fall through ─────────
+                    if (event.modifiers.control && !event.modifiers.alt && (event.text == "v" || event.text == "V")) {
+                        let res = root.paste-image-requested(self.text, self.cursor-position-byte-offset);
+                        if (res.handled) {
+                            self.text = res.text;
+                            self.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(self.text);
+                            return accept;
+                        }
+                        // No image in clipboard — fall through to native paste
+                    }
+                    // ── Normal editing assistance ───────────────────────────
+                    if (!event.modifiers.control && !event.modifiers.alt && event.text != "") {
+                        let res = root.handle-edit-key(
+                            event.text,
+                            event.modifiers.control,
+                            event.modifiers.shift,
+                            event.modifiers.alt,
+                            self.text,
+                            self.cursor-position-byte-offset,
+                            self.anchor-position-byte-offset
+                        );
+                        if (res.handled) {
+                            self.text = res.text;
+                            self.set-selection-offsets(res.anchor, res.cursor);
+                            root.content-changed(self.text);
+                            root.update-suggestions(self.text, res.cursor);
+                            return accept;
+                        }
+                    }
+                    reject
                 }
-                reject
             }
         }
     }
@@ -209,8 +262,8 @@ export component Editor inherits Rectangle {
                     let res = root.format-selection(
                         "bold",
                         root.content,
-                        root.cursor-pos,
-                        root.anchor-pos
+                        root.context-cursor,
+                        root.context-anchor
                     );
                     if (res.handled) {
                         root.content = res.text;
@@ -223,8 +276,8 @@ export component Editor inherits Rectangle {
                     let res = root.format-selection(
                         "italic",
                         root.content,
-                        root.cursor-pos,
-                        root.anchor-pos
+                        root.context-cursor,
+                        root.context-anchor
                     );
                     if (res.handled) {
                         root.content = res.text;
@@ -237,8 +290,8 @@ export component Editor inherits Rectangle {
                     let res = root.format-selection(
                         "code",
                         root.content,
-                        root.cursor-pos,
-                        root.anchor-pos
+                        root.context-cursor,
+                        root.context-anchor
                     );
                     if (res.handled) {
                         root.content = res.text;
@@ -251,8 +304,8 @@ export component Editor inherits Rectangle {
                     let res = root.format-selection(
                         "codeblock",
                         root.content,
-                        root.cursor-pos,
-                        root.anchor-pos
+                        root.context-cursor,
+                        root.context-anchor
                     );
                     if (res.handled) {
                         root.content = res.text;
